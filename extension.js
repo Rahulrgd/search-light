@@ -44,6 +44,19 @@ import {
   gettext as _,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
+// GNOME 48+ moved (un)redirect from Meta.*_for_display to global.compositor.
+function setUnredirect(enabled) {
+  const c = global.compositor;
+  if (c?.enable_unredirect) {
+    if (enabled) c.enable_unredirect();
+    else c.disable_unredirect();
+  } else if (enabled) {
+    Meta.enable_unredirect_for_display(global.display);
+  } else {
+    Meta.disable_unredirect_for_display(global.display);
+  }
+}
+
 var SearchLight = GObject.registerClass(
   {},
   class SearchLight extends St.Widget {
@@ -138,11 +151,16 @@ export default class SearchLightExt extends Extension {
     this.mainContainer._delegate = this;
     this.container = new St.BoxLayout({
       name: 'searchLightBox',
-      orientation: Clutter.Orientation.VERTICAL,
       reactive: true,
       track_hover: true,
       can_focus: true,
     });
+    // GNOME 48+ has St.BoxLayout:orientation; GNOME 46/47 only have :vertical.
+    if ('orientation' in this.container) {
+      this.container.orientation = Clutter.Orientation.VERTICAL;
+    } else {
+      this.container.vertical = true;
+    }
 
     this.hide();
     this.container._delegate = this;
@@ -453,7 +471,7 @@ export default class SearchLightExt extends Extension {
     this._updateCss();
     this._layout();
 
-    global.compositor.disable_unredirect();
+    setUnredirect(false);
 
     this.mainContainer.show();
     this.container.show();
@@ -507,14 +525,14 @@ export default class SearchLightExt extends Extension {
         onComplete: () => {
           this._visible = false;
           this.mainContainer.hide();
-          global.compositor.enable_unredirect();
+          setUnredirect(true);
         },
       });
     } else {
       this.mainContainer.opacity = 0;
       this._visible = false;
       this.mainContainer.hide();
-      global.compositor.enable_unredirect();
+      setUnredirect(true);
     }
     // this._hidePopups();
   }
