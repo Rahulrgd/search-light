@@ -132,12 +132,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] 1.7 Put the result on top: move the provider display to index 0 in
       `_searchResults._content`, and move it to the front of the `_providers` array so
       **Enter** activates it by default.
-- [~] 1.8 Automated: `gjs -m tests/test_websearch_core.js` (13 unit checks: case,
+- [x] 1.8 Automated: `gjs -m tests/test_websearch_core.js` (13 unit checks: case,
       `&`/`#`/Hindi encoding) + `./scripts/headless.sh --unsafe -- tests/e2e_websearch.sh`
       (17 checks with real Enter key presses: g/yt/w, `g settings` beats the app
       result, `yt` alone shows a hint and opens nothing, no keyword = hidden,
-      disable/enable). **Pending**: a manual check on the real desktop with a real
-      browser (`make build install`, then logout/login).
+      disable/enable). Manual check on the real desktop with a real browser ✅
+      (2026-11-17, installed with `make build install-zip` + logout/login).
 - [x] 1.9 Fixes found on the way: after Enter, the popup only went transparent
       (it closes on window focus change), so it is now hidden explicitly, deferred
       via `_hiTimer` because hiding inside `activate()` aborted Clutter. `hide()`
@@ -225,3 +225,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | Phase 0 ✅ (commit 2caa9fc) | GNOME 46 compat (2 API fallbacks), headless test setup, provider probe passed. Known leftover: `GLib-CRITICAL Source ID … not found` on disable (same class of bug as upstream, harmless; fix in 6.2). Hand-calling `hide()` via Eval aborts the shell on v37 too, so tests close the popup with a virtual Escape key. |
 | 2026-11-17 | Phase 1 ✅ (except the 1.8 manual browser check) | `g`/`yt`/`w`/… keyword search works headless on GNOME 46; 10 default engines hardcoded in `providers/webSearchCore.js`. |
 | 2026-11-17 | Phase 1 committed (367c3d1) · Phase 2 ✅ | Web Search settings page, live reload, `tests/run_all.sh` (4 suites green). |
+| 2026-11-17 | v101 installed on the real desktop | `make build install-zip` + re-login; web search and the settings page confirmed working by hand. Use `install-zip` (a clean install), not `install` (which copies tests/ and scripts/ too). |
