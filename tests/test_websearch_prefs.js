@@ -10,6 +10,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import System from 'system';
 
 import { buildWebSearchPage } from '../preferences/webSearchPage.js';
+import { buildPluginsPage } from '../preferences/pluginsPage.js';
 
 let failed = 0;
 function eq(name, actual, expected) {
@@ -199,6 +200,31 @@ ui.model.reset();
 pump(300);
 
 eq('no dialog left open', win.visible_dialog, null);
+
+// --- Commands page ---
+const cp = buildPluginsPage(settings, win);
+win.add(cp.page);
+win.set_visible_page(cp.page);
+pump(300);
+shoot('4-commands-page');
+const plugins = () => JSON.parse(settings.get_string('plugins') || '{}');
+eq('commands: one row per plugin, global has no keyword field',
+  [Object.keys(cp.rows).length, cp.rows.system.entry, cp.rows.kill.entry.text], [4, null, 'kill']);
+cp.rows.kill.entry.text = 'k';
+eq('keyword change saved', plugins().kill.keyword, 'k');
+cp.rows.kill.entry.text = 'k x';
+eq('keyword with a space: not saved, entry marked', [plugins().kill.keyword, cp.rows.kill.entry.has_css_class('error')], ['k', true]);
+cp.rows.kill.entry.text = 'kill';
+cp.rows.shell.toggle.active = false;
+eq('switch off saved, keyword field greyed', [plugins().shell.enabled, cp.rows.shell.entry.sensitive], [false, false]);
+cp.rows.shell.toggle.active = true;
+settings.set_strv('plugin-shell-history', ['htop', 'ls']);
+pump();
+eq('history row shows the count, Clear enabled', [cp.clearButton.sensitive], [true]);
+cp.clearButton.emit('clicked');
+pump();
+eq('Clear empties the history', [settings.get_strv('plugin-shell-history'), cp.clearButton.sensitive], [[], false]);
+settings.reset('plugins');
 
 win.close();
 print(failed ? `\n${failed} failed` : '\nall passed');

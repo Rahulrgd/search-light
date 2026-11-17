@@ -172,6 +172,16 @@
         <summary>Search suggestions</summary>
         <description>Show live suggestions from the engine while typing after a keyword. Sends that text to the engine's suggestion service.</description>
     </key>
+    <key type="s" name="plugins">
+        <default>""</default>
+        <summary>Command plugins</summary>
+        <description>JSON object {id: {enabled, keyword}} for the command plugins (help, shell, kill, system). Missing entries use the defaults.</description>
+    </key>
+    <key type="as" name="plugin-shell-history">
+        <default><![CDATA[[]]]></default>
+        <summary>Shell command history</summary>
+        <description>Recent commands run with the shell plugin, newest first.</description>
+    </key>
     <key type="d" name="animation-speed">
 	<default>100</default>
 	<summary>Animation speed</summary>

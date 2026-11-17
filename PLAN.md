@@ -248,15 +248,42 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       (Google, YouTube, Wikipedia, DDG, Hindi query).
 
 ### Phase 5: More Flow-style providers (one by one, each with its own switch)
-- [ ] 5.1 Refactor: common `providers/base.js` + registry (keyword, enabled, priority).
-- [ ] 5.2 System commands.
-- [ ] 5.3 Shell command `>`.
+- [x] 5.1 Registry: `providers/pluginsCore.js` (pure, unit tested). A plugin
+      returns items whose `action` is plain data; `providers/pluginActions.js`
+      performs it in the shell. Two providers (`providers/plugins.js`):
+      keyword plugins sit right after the web results (they take Enter), and
+      global ones sit after the apps, before the fallback (they never take
+      Enter from an app). `plugins` setting = JSON `{id: {enabled, keyword}}`.
+      Word keywords need a space; symbol keywords (`>`, `?`) do not.
+      `_registerProvider` is wrapped too, so remote providers re-added after
+      an app install do not push our tail out of place.
+- [x] 5.2 System commands (global, ≥ 2 chars, alias prefix): lock, suspend,
+      power off, restart, log out (through GNOME `SystemActions`, which asks
+      for confirmation), toggle dark style, screenshot UI. The popup hides
+      first.
+- [x] 5.3 Shell `>`: runs in the default terminal (GNOME setting, else the
+      first one installed), with the user's `$SHELL -c "cmd; exec $SHELL"` so
+      the terminal stays open. The command is a single argv element. History
+      (`plugin-shell-history`, 20 entries) is shown for `>` and filtered by
+      prefix.
 - [ ] 5.4 Unit + currency converter revive.
 - [ ] 5.5 Browser bookmarks `b`.
-- [ ] 5.6 Process killer `kill`.
-- [ ] 5.7 `?` help / keyword list.
+- [x] 5.6 Process killer `kill`: the user's own processes from `/proc` (owner
+      taken from the directory listing, 2 s cache, ~50 ms), biggest RSS first.
+      Sends SIGTERM. gnome-shell, gnome-session, systemd, Xwayland and
+      dbus are never offered.
+- [x] 5.7 `?` help: lists engine and plugin keywords, filtered by what follows
+      `?`. Enter fills the entry with `<keyword> ` and keeps the popup open.
 - [ ] 5.8 Custom query shortcuts.
 - [ ] 5.9 Usage-based ranking + history.
+- [x] 5.10 Settings: "Commands" page (switch + keyword field per plugin,
+      invalid keyword marked and not saved; Clear shell history).
+- [x] 5.11 Tests: `tests/test_plugins_core.js` (40 checks), +20 e2e checks
+      (the lowest-level actions are stubbed, so the real hide-then-run path
+      runs, but nothing is executed), +7 prefs checks. Real `/proc` listing
+      and terminal detection checked by hand in the headless shell.
+- Known: a plugin keyword can equal an engine keyword (both then answer).
+  The prefs do not warn about that yet (see 6.x).
 
 ### Phase 6: Quality & release
 - [ ] 6.1 Run `make lint`, fix warnings.
@@ -281,3 +308,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | v101 installed on the real desktop | `make build install-zip` + re-login; web search and the settings page confirmed working by hand. Use `install-zip` (a clean install), not `install` (which copies tests/ and scripts/ too). |
 | 2026-11-17 | Branch pushed · Phase 3 ✅ | Space-after-keyword, exclusive mode, fallback (last), typed URLs, favicons, stale-label fix. |
 | 2026-11-17 | Row polish committed (10c495c) · Phase 4 ✅ | Live suggestions (opt-in), Tab completion, "Suggestions" section. |
+| 2026-11-17 | Phase 4 committed (1a54449) · Phase 5 part 1 ✅ | Plugin registry, `?` help, system commands, `>` shell, `kill`, Commands settings page. |

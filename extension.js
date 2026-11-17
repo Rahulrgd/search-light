@@ -44,6 +44,12 @@ import {
   WebFallbackProvider,
 } from './providers/webSearch.js';
 import { closeHttp } from './providers/http.js';
+import {
+  PluginKeywordProvider,
+  PluginGlobalProvider,
+} from './providers/plugins.js';
+import { PluginActions } from './providers/pluginActions.js';
+import { pushHistory, resolvePluginConfig } from './providers/pluginsCore.js';
 import { resolveEngines } from './providers/webSearchCore.js';
 import { FaviconCache } from './providers/favicons.js';
 
@@ -127,6 +133,8 @@ export default class SearchLightExt extends Extension {
         case 'web-search-open-urls':
         case 'web-search-favicons':
         case 'web-search-suggestions':
+        case 'plugins':
+        case 'plugin-shell-history':
           this._applyWebSearchSettings();
           break;
         case 'border-radius':
@@ -306,6 +314,9 @@ export default class SearchLightExt extends Extension {
     this._webSuggest?.destroy();
     this._webSuggest = null;
     this._webFallback = null;
+    this._pluginKeyword = null;
+    this._pluginGlobal = null;
+    this._pluginActions = null;
     closeHttp();
     this._favicons?.destroy();
     this._favicons = null;
@@ -428,12 +439,39 @@ export default class SearchLightExt extends Extension {
     this._webSearch ??= new WebSearchProvider(webOpts);
     this._webSuggest ??= new WebSuggestProvider(webOpts);
     this._webFallback ??= new WebFallbackProvider(webOpts);
-    // The fallback stays quiet when a keyword or URL result covers the text.
+    this._pluginKeyword ??= new PluginKeywordProvider(webOpts);
+    this._pluginGlobal ??= new PluginGlobalProvider(webOpts);
+    this._pluginActions ??= new PluginActions({
+      // Hide first, so a dialog or the lock screen is not covered by the popup.
+      afterHide: (fn, delay) => {
+        this._hiTimer?.runOnce(() => this.hide(), 0);
+        this._hiTimer?.runOnce(fn, 50 + delay);
+      },
+      onShellCommand: (command) =>
+        this._settings?.set_strv('plugin-shell-history', pushHistory(
+          this._settings.get_strv('plugin-shell-history'), command)),
+    });
+    for (const p of [this._pluginKeyword, this._pluginGlobal]) {
+      p.runAction = (action) => this._pluginActions.run(action);
+      p.processes = () => this._pluginActions.listProcesses();
+    }
+    // A keyword (web engine or plugin) owns the text: the global commands and
+    // the fallback stay quiet; a URL result also silences the fallback.
+    const keywordActive = () =>
+      !!this._webSearch.currentMatch() || !!this._pluginKeyword.currentMatch();
+    this._pluginGlobal.isClaimed = keywordActive;
     this._webFallback.isClaimed = () =>
-      this._webSearch.enabled &&
-      this._webSearch._compute(webOpts.getText()).length > 0;
+      keywordActive() ||
+      (this._webSearch.enabled &&
+        this._webSearch._compute(webOpts.getText()).length > 0);
     this._applyWebSearchSettings();
-    this._providers.push(this._webSearch, this._webSuggest, this._webFallback);
+    this._providers.push(
+      this._webSearch,
+      this._webSuggest,
+      this._pluginKeyword,
+      this._pluginGlobal,
+      this._webFallback,
+    );
 
     if (_search.addProvider) {
       this._providers.forEach((p) => {
@@ -445,7 +483,8 @@ export default class SearchLightExt extends Extension {
       // takes Enter away from an app.
       this._moveProvider(this._webSearch, 0);
       this._moveProvider(this._webSuggest, 1);
-      this._moveProvider(this._webFallback, -1);
+      this._moveProvider(this._pluginKeyword, 2);
+      this._keepTail();
       this._patchSearchResults();
     }
   }
@@ -474,6 +513,21 @@ export default class SearchLightExt extends Extension {
     if (enabled && this._webFaviconsOn) {
       this._favicons?.ensure(engines.filter((e) => e.enabled).map((e) => e.url));
     }
+
+    const config = resolvePluginConfig(s.get_string('plugins'));
+    const history = s.get_strv('plugin-shell-history');
+    for (const p of [this._pluginKeyword, this._pluginGlobal]) {
+      if (!p) continue;
+      p.config = config;
+      p.history = history;
+      p.engines = engines; // for the "?" keyword list
+    }
+  }
+
+  // Global commands, then the web fallback, stay at the end (after apps).
+  _keepTail() {
+    this._moveProvider(this._pluginGlobal, -1);
+    this._moveProvider(this._webFallback, -1);
   }
 
   // The header button's animateLaunch() looks the provider app up in
@@ -516,17 +570,25 @@ export default class SearchLightExt extends Extension {
     sr.__slUpdateResults = sr._updateResults;
     sr._updateResults = (provider, results) => {
       const web = this._webSearch;
+      const keywordOwners = [web, this._webSuggest, this._pluginKeyword];
       if (
         web &&
-        provider !== web &&
-        provider !== this._webSuggest &&
+        !keywordOwners.includes(provider) &&
         this._webExclusive &&
-        web.currentMatch()
+        (web.currentMatch() || this._pluginKeyword?.currentMatch())
       ) {
         results = [];
       }
-      if (provider === this._webFallback) this._moveProvider(provider, -1);
+      if (provider === this._webFallback || provider === this._pluginGlobal)
+        this._keepTail();
       return sr.__slUpdateResults.call(sr, provider, results);
+    };
+    // Remote providers re-registered after an app install land at the end.
+    sr.__slRegisterProvider = sr._registerProvider;
+    sr._registerProvider = (provider) => {
+      sr.__slRegisterProvider.call(sr, provider);
+      if (provider !== this._pluginGlobal && provider !== this._webFallback)
+        this._keepTail();
     };
   }
 
@@ -535,6 +597,10 @@ export default class SearchLightExt extends Extension {
     if (!sr?.__slUpdateResults) return;
     sr._updateResults = sr.__slUpdateResults;
     delete sr.__slUpdateResults;
+    if (sr.__slRegisterProvider) {
+      sr._registerProvider = sr.__slRegisterProvider;
+      delete sr.__slRegisterProvider;
+    }
   }
 
   // Tab completes the first suggestion ("g naru" → "g naruto"). Runs in the

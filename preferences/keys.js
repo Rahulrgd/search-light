@@ -130,6 +130,9 @@ export const SettingsKeys = () => {
     'web-search-open-urls': { default_value: true, widget_type: 'switch' },
     'web-search-favicons': { default_value: true, widget_type: 'switch' },
     'web-search-suggestions': { default_value: false, widget_type: 'switch' },
+    'plugins': { default_value: '', widget_type: 'string' },
+    // 'shortcut' = the PrefKeys type that reads an 'as' value.
+    'plugin-shell-history': { default_value: [], widget_type: 'shortcut' },
     'animation-speed': {
       default_value: 100,
       widget_type: 'scale',

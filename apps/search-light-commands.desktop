@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Commands
+Comment=Search Light command plugins
+Icon=system-run
+Exec=true
+Terminal=false

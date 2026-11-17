@@ -31,7 +31,7 @@ import { fetchJson } from './http.js';
 
 const ICON_NAME = 'web-browser-symbolic';
 
-class BaseWebProvider {
+export class BaseWebProvider {
   /**
    * @param {object} opts
    * @param {string} opts.id

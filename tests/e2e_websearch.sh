@@ -135,8 +135,9 @@ check 'one request, query encoded' "$(ev 'JSON.stringify(__fetches.map((u) => u.
 check 'keyword result still first + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
 check 'exclusive mode keeps suggestions, hides apps' "$(ev "$APPS_SHOWN")" 'false'
 ev 'globalThis.__fetches = []; 1' >/dev/null
-for t in 'g s' 'g sa' 'g sas' 'g sasu'; do ev "Main.overview.searchLight._entry.set_text('$t'); 1" >/dev/null; done
-settle
+# One Eval, 50 ms apart: separate Evals can be >250 ms apart on a busy machine.
+ev '["g s", "g sa", "g sas", "g sasu"].forEach((t, i) => imports.gi.GLib.timeout_add(0, 50 * i, () => { Main.overview.searchLight._entry.set_text(t); return false; })); 1' >/dev/null
+sleep 0.5; settle
 check 'typing fast: debounced to the last text only' "$(ev 'JSON.stringify(__fetches.map((u) => u.replace(/^.*[?&]q=/, "q=")))')" '["q=sasu"]'
 open_and_type 'g naru'
 check 'same query again: served from cache' "$(ev 'String(__fetches.length)')" '1'
@@ -163,11 +164,59 @@ key Tab; sleep 0.5
 check 'suggestions off: Tab does not complete' "$(ev 'Main.overview.searchLight._entry.get_text()')" 'g boruto'
 key Escape; sleep 0.5
 
+mark plugins  # the lowest-level actions are stubbed: nothing really runs
+stub_plugins() {
+  ev 'globalThis.__ran = []; const pa = Main.overview.searchLight._pluginActions; pa._system = (w) => __ran.push("system:" + w); pa._kill = (pid) => __ran.push("kill:" + pid); pa._shell = (c) => { __ran.push("shell:" + c); pa._onShellCommand(c); }; pa.listProcesses = () => [{ pid: 101, name: "firefox", rssKb: 900000 }, { pid: 102, name: "firefox-bin", rssKb: 2000000 }, { pid: 103, name: "gnome-shell", rssKb: 500000 }]; 1' >/dev/null
+}
+ran() { ev 'JSON.stringify(__ran)'; }
+PLUG='(() => { const sl = Main.overview.searchLight; const sr = Main.overview.searchController._searchResults; const l = sr._providers; const d = sr._defaultResult?.provider; const titles = (p) => { const out = []; const walk = (a) => { if (a.style_class?.includes("list-search-result-title")) a.get_children().forEach((c) => c instanceof imports.gi.St.Label && out.push(c.text)); a.get_children().forEach(walk); }; if (p.display?.visible) walk(p.display); return out; }; return JSON.stringify({ kw: titles(sl._pluginKeyword), global: titles(sl._pluginGlobal), default: d === sl._pluginKeyword ? "keyword" : d === sl._pluginGlobal ? "global" : d ? "other" : "none", order: l.indexOf(sl._pluginKeyword) === 2 && l.indexOf(sl._pluginGlobal) === l.length - 2 }); })()'
+$GS reset $SCHEMA plugin-shell-history
+open_and_type 'x'; stub_plugins
+open_and_type '> htop'
+check '"> htop": run row, plugin takes Enter' "$(ev "$PLUG")" '{"kw":["Run “htop”"],"global":[],"default":"keyword","order":true}'
+check '"> htop": no web fallback' "$(ev "$STATE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fb"])')" 'False'
+key Return; sleep 1
+check 'Enter runs the command (after hiding the popup)' "$(ran),$(ev 'String(Main.overview.searchLight._visible)')" '["shell:htop"],false'
+check 'command saved to history' "$($GS get $SCHEMA plugin-shell-history)" "['htop']"
+open_and_type '>'; stub_plugins
+check '">" alone lists history' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["kw"])')" "['Run “htop”']"
+key Escape; sleep 0.5
+open_and_type 'kill fire'; stub_plugins; open_and_type 'kill fire'
+check '"kill fire": biggest first, exclusive hides apps' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["kw"])'),$(ev "$APPS_SHOWN")" "['Stop firefox-bin', 'Stop firefox'],false"
+key Return; sleep 1
+check 'Enter stops the biggest match' "$(ran)" '["kill:102"]'
+open_and_type 'kill gnome'
+check 'gnome-shell is never offered' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["kw"])')" '[]'
+key Escape; sleep 0.5
+open_and_type '?'; stub_plugins
+check '"?" lists keywords' "$(ev "$PLUG" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["kw"][0], d["default"])')" 'g  —  Google keyword'
+key Return; settle
+check 'help row fills the entry, popup stays' "$(ev 'Main.overview.searchLight._entry.get_text()'),$(ev 'String(Main.overview.searchLight._visible)')" 'g ,true'
+key Escape; sleep 0.5
+open_and_type 'lock'; stub_plugins
+check '"lock": global command placed after the apps' "$(ev "$PLUG" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["global"], d["order"])')" "['Lock screen'] True"
+key Escape; sleep 0.5
+# ("lock" also matches the Clocks app, which keeps Enter; "reboot" matches no app.)
+open_and_type 'reboot'; stub_plugins
+check '"reboot": global command is the default' "$(ev "$PLUG" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["global"], d["default"])')" "['Restart…'] global"
+key Return; sleep 1
+check 'Enter restarts via GNOME SystemActions (it asks to confirm)' "$(ran),$(ev 'String(Main.overview.searchLight._visible)')" '["system:restart"],false'
+open_and_type 'g lock'
+check 'keyword active: no global commands' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" '[]'
+key Escape; sleep 0.5
+$GS set $SCHEMA plugins '{"shell":{"enabled":false},"kill":{"keyword":"k"}}'; sleep 0.5
+open_and_type '> htop'
+check 'shell plugin disabled: no row' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["kw"])')" '[]'
+open_and_type 'k fire'
+check 'custom keyword "k" works' "$(ev "$PLUG" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["kw"]))')" '2'
+key Escape; sleep 0.5
+$GS reset $SCHEMA plugins; $GS reset $SCHEMA plugin-shell-history
+
 mark reenable; gnome-extensions disable $UUID; sleep 1
-check 'disabled: providers removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id.startsWith("search-light-web")).length)')" '0'
-check 'disabled: _updateResults restored' "$(ev 'String(!("__slUpdateResults" in Main.overview.searchController._searchResults))')" 'true'
+check 'disabled: providers removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id.startsWith("search-light-")).length)')" '0'
+check 'disabled: _updateResults/_registerProvider restored' "$(ev 'const sr = Main.overview.searchController._searchResults; String(!("__slUpdateResults" in sr) && !("__slRegisterProvider" in sr))')" 'true'
 gnome-extensions enable $UUID; sleep 2
-check 're-enabled: one of each, in place' "$(ev 'const l = Main.overview.searchController._searchResults._providers; [l.filter(p => p.id.startsWith("search-light-web")).length, l[0].id, l[1].id, l[l.length - 1].id].join(",")')" '3,search-light-web-search,search-light-web-suggest,search-light-web-fallback'
+check 're-enabled: one of each, in place' "$(ev 'const l = Main.overview.searchController._searchResults._providers; [l.filter(p => p.id.startsWith("search-light-")).length, l[0].id, l[1].id, l[2].id, l[l.length - 2].id, l[l.length - 1].id].join(",")')" '5,search-light-web-search,search-light-web-suggest,search-light-plugins,search-light-plugins-global,search-light-web-fallback'
 open_and_type 'w naruto'; stub
 key Return; sleep 1
 check 're-enabled: w naruto' "$(opened)" '["https://en.wikipedia.org/wiki/Special:Search?search=naruto"]'
