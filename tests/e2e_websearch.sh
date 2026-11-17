@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# End-to-end test of web search keywords inside a headless shell. URL opening is
-# stubbed, so no browser starts; each case types a query and presses a real Enter.
+# End-to-end test of web search inside a headless shell. URL opening is stubbed,
+# so no browser starts; cases type text and press real keys (Enter, Space, …).
 # Run: scripts/headless.sh --unsafe -- tests/e2e_websearch.sh
 set -uo pipefail
 E="$(dirname "$0")/../scripts/eval.sh"
 UUID=search-light@icedman.github.com
+GS="gsettings --schemadir $(dirname "$0")/../schemas"
+SCHEMA=org.gnome.shell.extensions.search-light
 fails=0
 
 ev() { $E "$1"; }
-ORDER='Main.overview.searchController._searchResults._providers.slice(0, 3).map(p => p.id).join(" ")'
+ORDER='(() => { const l = Main.overview.searchController._searchResults._providers; return l[0].id + " … " + l[l.length - 1].id; })()'
 mark() { ev "console.log('MARK $1'); 1" >/dev/null; echo "-- $1 | providers: $(ev "$ORDER")"; }
 key() {
   ev "const C = imports.gi.Clutter; globalThis.__kbd ??= C.get_default_backend().get_default_seat().create_virtual_device(C.InputDeviceType.KEYBOARD_DEVICE); const t = imports.gi.GLib.get_monotonic_time(); __kbd.notify_keyval(t, C.KEY_$1, C.KeyState.PRESSED); __kbd.notify_keyval(t + 1000, C.KEY_$1, C.KeyState.RELEASED); 1" >/dev/null
 }
 stub() {  # record opened URIs instead of launching a browser
-  ev 'globalThis.__opened = []; Main.overview.searchLight._webSearch.openUri = (u) => __opened.push(u); 1' >/dev/null
+  ev 'globalThis.__opened = []; const sl = Main.overview.searchLight; sl._webSearch.openUri = sl._webFallback.openUri = (u) => __opened.push(u); 1' >/dev/null
 }
+opened() { ev 'JSON.stringify(__opened)'; }
 check() {  # check <name> <actual> <expected>
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1"; echo "     got      $2"; echo "     expected $3"; fails=$((fails + 1)); fi
 }
@@ -25,63 +28,113 @@ open_and_type() {
   ev "Main.overview.searchLight._entry.set_text($(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')); 1" >/dev/null
   sleep 1.5
 }
-STATE='JSON.stringify((() => { const sr = Main.overview.searchController._searchResults; const ws = Main.overview.searchLight._webSearch; return { front: sr._providers[0] === ws, shown: !!ws.display?.visible, defaultIsWeb: sr._defaultResult?.provider === ws }; })())'
+# front: web provider first? shown: web result visible? default: who gets Enter
+# (web | fallback | other | none)? fb: fallback visible and last?
+STATE='JSON.stringify((() => { const sr = Main.overview.searchController._searchResults; const sl = Main.overview.searchLight; const ws = sl._webSearch, fb = sl._webFallback; const d = sr._defaultResult?.provider; const l = sr._providers; return { front: l[0] === ws, shown: !!ws.display?.visible, default: !d ? "none" : d === ws ? "web" : d === fb ? "fallback" : "other", fb: !!fb.display?.visible && l[l.length - 1] === fb }; })())'
+APPS_SHOWN='String(Main.overview.searchController._searchResults._providers.some(p => p.id === "applications" && p.display.visible))'
+# Texts of the labels inside the web result section
+WEB_LABELS='(() => { const out = []; const walk = (a) => { if (a instanceof imports.gi.St.Label && a.visible) out.push(a.text); a.get_children().forEach(walk); }; walk(Main.overview.searchLight._webSearch.display); return JSON.stringify(out); })()'
 
 sleep 3
+# Seed a favicon so the icon case needs no network.
+SEED_DIR="$XDG_CACHE_HOME/search-light/favicons"
+mkdir -p "$SEED_DIR"
+cp /usr/share/icons/hicolor/48x48/apps/*.png "$SEED_DIR/www.youtube.com.png" 2>/dev/null ||
+  python3 -c 'import base64,sys; open(sys.argv[1],"wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))' "$SEED_DIR/www.youtube.com.png"
 
-mark case1; open_and_type 'g naruto'; stub
-check 'g naruto: state' "$(ev "$STATE")" '{"front":true,"shown":true,"defaultIsWeb":true}'
+mark keyword; open_and_type 'g naruto'; stub
+check 'g naruto: web first + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
 key Return; sleep 1
-check 'g naruto: opened' "$(ev 'JSON.stringify(__opened)')" '["https://www.google.com/search?q=naruto"]'
+check 'g naruto: opened' "$(opened)" '["https://www.google.com/search?q=naruto"]'
 check 'g naruto: popup closed' "$(ev 'String(Main.overview.searchLight._visible)')" 'false'
 
-mark case2; open_and_type 'yt Naruto Shippuden'; stub
+mark live-label; open_and_type 'yt Naruto'
+open_and_type 'yt Naruto Shippuden'; stub
+check 'result text follows the query (no stale actor)' "$(ev "$WEB_LABELS" | grep -o 'Search YouTube for “[^”]*”' | head -1)" 'Search YouTube for “Naruto Shippuden”'
+check 'cached favicon used for the result' "$(ev '(() => { let f = null; const walk = (a) => { if (a instanceof imports.gi.St.Icon && a.gicon instanceof imports.gi.Gio.FileIcon) f = a.gicon.get_file().get_basename(); a.get_children().forEach(walk); }; walk(Main.overview.searchLight._webSearch.display); return String(f); })()')" 'www.youtube.com.png'
 key Return; sleep 1
-check 'yt case kept' "$(ev 'JSON.stringify(__opened)')" '["https://www.youtube.com/results?search_query=Naruto%20Shippuden"]'
+check 'yt case kept' "$(opened)" '["https://www.youtube.com/results?search_query=Naruto%20Shippuden"]'
 
-mark case3; open_and_type 'g settings'; stub
-check 'g settings: web wins over apps' "$(ev "$STATE")" '{"front":true,"shown":true,"defaultIsWeb":true}'
-check 'g settings: apps also matched' "$(ev 'String(Main.overview.searchController._searchResults._providers.some(p => p.id === "applications" && p.display.visible))')" 'true'
+mark exclusive; open_and_type 'g settings'; stub
+check 'exclusive on: only the web result' "$(ev "$STATE"),$(ev "$APPS_SHOWN")" '{"front":true,"shown":true,"default":"web","fb":false},false'
+key Escape; sleep 0.5
+$GS set $SCHEMA web-search-exclusive false; sleep 0.5
+open_and_type 'g settings'; stub
+check 'exclusive off: apps shown, web still default' "$(ev "$STATE"),$(ev "$APPS_SHOWN")" '{"front":true,"shown":true,"default":"web","fb":false},true'
 key Return; sleep 1
-check 'g settings: opened google' "$(ev 'JSON.stringify(__opened)')" '["https://www.google.com/search?q=settings"]'
+check 'g settings: opened google' "$(opened)" '["https://www.google.com/search?q=settings"]'
+$GS reset $SCHEMA web-search-exclusive
 
-mark case4; open_and_type 'yt'; stub
-check 'yt alone: hint shown' "$(ev "$STATE")" '{"front":true,"shown":true,"defaultIsWeb":true}'
+mark space; open_and_type 'yt'; stub
+check '"yt" without space: no keyword result' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
+key space; sleep 1.5
+check '"yt " (real Space key): hint shown + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
 key Return; sleep 1
-check 'yt alone: nothing opened' "$(ev 'JSON.stringify(__opened)')" '[]'
+check 'hint + Enter: nothing opened' "$(opened)" '[]'
+key BackSpace; sleep 1.5
+check 'Backspace: hint gone again' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
 key Escape; sleep 0.5
 
-mark case5; open_and_type 'settings'; stub
-check 'no keyword: web hidden' "$(ev "$STATE")" '{"front":true,"shown":false,"defaultIsWeb":false}'
+mark fallback; open_and_type 'settings'; stub
+# (The shell's own default for app results is null in the headless session,
+# with v37 too, so check what matters: Enter must not trigger the fallback.)
+check 'app match: fallback shown last, not default' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["fb"], d["default"] != "fallback")')" 'True True'
+key Return; sleep 1
+check 'app match + Enter: fallback not opened' "$(opened)" '[]'
 key Escape; sleep 0.5
-check 'popup closed: provider still registered at front' "$(ev 'String(Main.overview.searchController._searchResults._providers[0] === Main.overview.searchLight._webSearch)')" 'true'
+open_and_type 'zzqqxx naruto'; stub
+check 'no match: fallback is default' "$(ev "$STATE")" '{"front":true,"shown":false,"default":"fallback","fb":true}'
+key Return; sleep 1
+check 'fallback opens default engine (Google)' "$(opened)" '["https://www.google.com/search?q=zzqqxx%20naruto"]'
+$GS set $SCHEMA web-search-fallback-engine ddg; sleep 0.5
+open_and_type 'zzqqxx'; stub
+key Return; sleep 1
+check 'fallback engine setting (ddg)' "$(opened)" '["https://duckduckgo.com/?q=zzqqxx"]'
+$GS reset $SCHEMA web-search-fallback-engine
+$GS set $SCHEMA web-search-fallback false; sleep 0.5
+open_and_type 'zzqqxx'
+check 'fallback off: no result' "$(ev "$STATE")" '{"front":true,"shown":false,"default":"none","fb":false}'
+key Escape; sleep 0.5
+$GS reset $SCHEMA web-search-fallback
 
-mark case6; gnome-extensions disable $UUID; sleep 1
-check 'disabled: provider removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id === "search-light-web-search").length)')" '0'
+mark url; open_and_type 'github.com/Rahulrgd'; stub
+check 'typed URL: open result first + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
+key Return; sleep 1
+check 'typed URL opened with https' "$(opened)" '["https://github.com/Rahulrgd"]'
+open_and_type 'notes.txt'
+check 'notes.txt is not a URL' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
+key Escape; sleep 0.5
+$GS set $SCHEMA web-search-open-urls false; sleep 0.5
+open_and_type 'github.com/Rahulrgd'
+check 'open-urls off: no URL result' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
+key Escape; sleep 0.5
+$GS reset $SCHEMA web-search-open-urls
+check 'popup closed: providers stay registered' "$(ev "$ORDER")" 'search-light-web-search … search-light-web-fallback'
+
+mark reenable; gnome-extensions disable $UUID; sleep 1
+check 'disabled: providers removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id.startsWith("search-light-web")).length)')" '0'
+check 'disabled: _updateResults restored' "$(ev 'String(!("__slUpdateResults" in Main.overview.searchController._searchResults))')" 'true'
 gnome-extensions enable $UUID; sleep 2
-check 'enabled: registered before first popup' "$(ev 'String(Main.overview.searchController._searchResults._providers[0].id)')" 'search-light-web-search'
-check 're-enabled: one provider, at front' "$(ev 'const l = Main.overview.searchController._searchResults._providers; String(l.filter(p => p.id === "search-light-web-search").length) + "," + (l[0].id === "search-light-web-search")')" '1,true'
+check 're-enabled: one of each, first and last' "$(ev 'const l = Main.overview.searchController._searchResults._providers; [l.filter(p => p.id.startsWith("search-light-web")).length, l[0].id, l[l.length - 1].id].join(",")')" '2,search-light-web-search,search-light-web-fallback'
 open_and_type 'w naruto'; stub
 key Return; sleep 1
-check 're-enabled: w naruto' "$(ev 'JSON.stringify(__opened)')" '["https://en.wikipedia.org/wiki/Special:Search?search=naruto"]'
+check 're-enabled: w naruto' "$(opened)" '["https://en.wikipedia.org/wiki/Special:Search?search=naruto"]'
 
-mark case7  # live settings changes, no restart
-GS="gsettings --schemadir $(dirname "$0")/../schemas"
-SCHEMA=org.gnome.shell.extensions.search-light
+mark settings  # live settings changes, no restart
 $GS set $SCHEMA web-search-engines '[{"keyword":"ex","name":"Example","url":"https://ex.com/?q={q}"}]'; sleep 0.5
 open_and_type 'ex foo bar'; stub
 key Return; sleep 1
-check 'custom engine from settings' "$(ev 'JSON.stringify(__opened)')" '["https://ex.com/?q=foo%20bar"]'
+check 'custom engine from settings' "$(opened)" '["https://ex.com/?q=foo%20bar"]'
 open_and_type 'g naruto'
-check 'removed engine no longer matches' "$(ev "$STATE")" '{"front":true,"shown":false,"defaultIsWeb":false}'
+check 'removed engine: no keyword result, fallback uses first engine' "$(ev "$STATE")" '{"front":true,"shown":false,"default":"fallback","fb":true}'
 key Escape; sleep 0.5
 $GS set $SCHEMA web-search-enabled false; sleep 0.5
 open_and_type 'ex foo'
-check 'master switch off: no web result' "$(ev "$STATE")" '{"front":true,"shown":false,"defaultIsWeb":false}'
+check 'master switch off: no web results at all' "$(ev "$STATE")" '{"front":true,"shown":false,"default":"none","fb":false}'
 key Escape; sleep 0.5
 $GS reset $SCHEMA web-search-enabled; $GS reset $SCHEMA web-search-engines; sleep 0.5
 open_and_type 'yt naruto'
-check 'reset: defaults back' "$(ev "$STATE")" '{"front":true,"shown":true,"defaultIsWeb":true}'
+check 'reset: defaults back' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
 key Escape; sleep 0.5
 
 mark done
@@ -91,7 +144,9 @@ check 'extension state' "$(gnome-extensions info $UUID | sed -n 's/.*State: //p'
 # "already disposed" criticals in the headless session: installed-changed makes
 # _reloadRemoteProviders() rebuild remote providers mid-search (happens without
 # our provider too).
-ERR_RE='JS ERROR|TypeError|ReferenceError|SyntaxError|extensions/search-light@'
+# Our wrapper of _updateResults can show up deeper in their stack traces, so
+# only a top frame (#0) in our files counts.
+ERR_RE='JS ERROR|TypeError|ReferenceError|SyntaxError|#0 .*extensions/search-light@'
 log_errors="$(grep -cE "$ERR_RE" "$FF_TEST_DIR/shell.log")"
 check 'no extension errors in shell.log' "$log_errors" '0'
 [ "$log_errors" = 0 ] || grep -E "$ERR_RE" -B2 -A3 "$FF_TEST_DIR/shell.log" | head -30

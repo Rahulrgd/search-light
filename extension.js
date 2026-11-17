@@ -38,8 +38,12 @@ import { BlurEffect } from './effects/blur_effect.js';
 
 import { schemaId, SettingsKeys } from './preferences/keys.js';
 import { KeyboardShortcuts } from './keybinding.js';
-import { WebSearchProvider } from './providers/webSearch.js';
+import {
+  WebSearchProvider,
+  WebFallbackProvider,
+} from './providers/webSearch.js';
 import { resolveEngines } from './providers/webSearchCore.js';
+import { FaviconCache } from './providers/favicons.js';
 
 import {
   Extension,
@@ -115,6 +119,11 @@ export default class SearchLightExt extends Extension {
           break;
         case 'web-search-enabled':
         case 'web-search-engines':
+        case 'web-search-exclusive':
+        case 'web-search-fallback':
+        case 'web-search-fallback-engine':
+        case 'web-search-open-urls':
+        case 'web-search-favicons':
           this._applyWebSearchSettings();
           break;
         case 'border-radius':
@@ -288,8 +297,12 @@ export default class SearchLightExt extends Extension {
     }
 
     this._removeProviders();
+    this._unpatchSearchResults();
     this._providers = null;
     this._webSearch = null;
+    this._webFallback = null;
+    this._favicons?.destroy();
+    this._favicons = null;
 
     if (this._background) {
       if (this._background.get_parent()) {
@@ -396,49 +409,134 @@ export default class SearchLightExt extends Extension {
     if (!_search) return;
 
     // add providers here
-    // hide() moves the search UI back to the overview; doing that while the shell
-    // is still inside the result's activate() crashes Clutter, so defer it.
-    this._webSearch ??= new WebSearchProvider(this.path, () =>
-      this._hiTimer?.runOnce(() => this.hide(), 0),
-    );
+    this._favicons ??= new FaviconCache();
+    const webOpts = {
+      extensionPath: this.path,
+      // Raw text: the shell's terms drop the trailing space of "g ".
+      getText: () => Main.overview.searchEntry?.get_text() ?? '',
+      // hide() moves the search UI back to the overview; doing that while the
+      // shell is still inside the result's activate() crashes Clutter, so defer.
+      onActivated: () => this._hiTimer?.runOnce(() => this.hide(), 0),
+      iconFor: (url) => (this._webFaviconsOn ? this._favicons?.gicon(url) : null),
+    };
+    this._webSearch ??= new WebSearchProvider(webOpts);
+    this._webFallback ??= new WebFallbackProvider(webOpts);
+    // The fallback stays quiet when a keyword or URL result covers the text.
+    this._webFallback.isClaimed = () =>
+      this._webSearch.enabled &&
+      this._webSearch._compute(webOpts.getText()).length > 0;
     this._applyWebSearchSettings();
-    this._providers.push(this._webSearch);
+    this._providers.push(this._webSearch, this._webFallback);
 
     if (_search.addProvider) {
       this._providers.forEach((p) => {
         _search.addProvider(p);
+        this._neutralizeProviderHeader(p);
       });
-      // Keyword results (web search) go first, so Enter activates them.
-      this._moveProviderToFront(this._webSearch);
+      // Keyword/URL results go first, so Enter activates them; the fallback
+      // goes last, so it never takes Enter away from an app.
+      this._moveProvider(this._webSearch, 0);
+      this._moveProvider(this._webFallback, -1);
+      this._patchSearchResults();
     }
   }
 
   // Live: called on every web-search-* settings change, no restart needed.
   _applyWebSearchSettings() {
     if (!this._webSearch || !this._settings) return;
-    this._webSearch.enabled = this._settings.get_boolean('web-search-enabled');
-    this._webSearch.engines = resolveEngines(
-      this._settings.get_string('web-search-engines'),
-    );
+    const s = this._settings;
+    const enabled = s.get_boolean('web-search-enabled');
+    const engines = resolveEngines(s.get_string('web-search-engines'));
+    this._webExclusive = s.get_boolean('web-search-exclusive');
+    this._webFaviconsOn = s.get_boolean('web-search-favicons');
+
+    this._webSearch.enabled = enabled;
+    this._webSearch.engines = engines;
+    this._webSearch.openUrls = s.get_boolean('web-search-open-urls');
+    if (this._webFallback) {
+      this._webFallback.enabled = enabled && s.get_boolean('web-search-fallback');
+      this._webFallback.engines = engines;
+      this._webFallback.fallbackKeyword = s.get_string('web-search-fallback-engine');
+    }
+    if (enabled && this._webFaviconsOn) {
+      this._favicons?.ensure(engines.filter((e) => e.enabled).map((e) => e.url));
+    }
+  }
+
+  // The header button's animateLaunch() looks the provider app up in
+  // Shell.AppSystem, which does not know our private .desktop file.
+  _neutralizeProviderHeader(provider) {
+    if (provider.display?.providerInfo) {
+      provider.display.providerInfo.animateLaunch = () => {};
+    }
   }
 
   // Uses SearchResultsView internals (_providers, _content); the default result
   // for Enter is the first visible provider in _providers order.
-  _moveProviderToFront(provider) {
+  // index 0 = first, -1 = last.
+  _moveProvider(provider, index) {
     const results = Main.overview.searchController?._searchResults;
     const list = results?._providers;
-    const index = list?.indexOf(provider) ?? -1;
-    if (index < 0) return;
-    list.splice(index, 1);
-    list.unshift(provider);
+    const at = list?.indexOf(provider) ?? -1;
+    if (at < 0) return;
+    const target = index < 0 ? list.length - 1 : index;
+    if (at === target) return;
+    list.splice(at, 1);
+    if (index < 0) list.push(provider);
+    else list.splice(index, 0, provider);
     if (provider.display && results._content) {
-      results._content.set_child_at_index(provider.display, 0);
+      results._content.set_child_at_index(
+        provider.display,
+        index < 0 ? results._content.get_n_children() - 1 : index,
+      );
     }
-    // The header button's animateLaunch() looks the provider app up in
-    // Shell.AppSystem, which does not know our private .desktop file.
-    if (provider.display?.providerInfo) {
-      provider.display.providerInfo.animateLaunch = () => {};
-    }
+  }
+
+  // Wraps SearchResultsView._updateResults (restored by _unpatchSearchResults):
+  // - exclusive mode: while a keyword is active ("g naruto"), other providers
+  //   are shown with no results (their real results stay cached for subsearch);
+  // - keeps the fallback last: the shell re-appends remote providers whenever
+  //   the installed apps change.
+  _patchSearchResults() {
+    const sr = Main.overview.searchController?._searchResults;
+    if (!sr || sr.__slUpdateResults) return;
+    sr.__slUpdateResults = sr._updateResults;
+    sr._updateResults = (provider, results) => {
+      const web = this._webSearch;
+      if (
+        web &&
+        provider !== web &&
+        this._webExclusive &&
+        web.currentMatch()
+      ) {
+        results = [];
+      }
+      if (provider === this._webFallback) this._moveProvider(provider, -1);
+      return sr.__slUpdateResults.call(sr, provider, results);
+    };
+  }
+
+  _unpatchSearchResults() {
+    const sr = Main.overview.searchController?._searchResults;
+    if (!sr?.__slUpdateResults) return;
+    sr._updateResults = sr.__slUpdateResults;
+    delete sr.__slUpdateResults;
+  }
+
+  // The shell skips a search whose terms did not change, and "g" → "g " (or
+  // back) keeps the terms. The keyword hint depends on that trailing space, so
+  // force a new search when it appears or disappears.
+  _researchOnTrailingSpace() {
+    const sr = this._searchResults;
+    const text = Main.overview.searchEntry?.get_text() ?? '';
+    const trailing = /\s$/.test(text);
+    if (trailing === this._lastTrailingSpace) return;
+    this._lastTrailingSpace = trailing;
+    const terms = sr?._terms;
+    if (!terms?.length || terms.join(' ') !== text.trim().split(/\s+/).join(' '))
+      return;
+    sr._terms = [];
+    sr.setTerms(terms);
   }
 
   _removeProviders() {
@@ -818,6 +916,7 @@ export default class SearchLightExt extends Extension {
       this._search._searchCancelled = () => {};
     }
     this._search._text.get_parent().grab_key_focus();
+    this._lastTrailingSpace = false;
     this._textChangedEventId = this._search._text.connect(
       'text-changed',
       () => {
@@ -829,6 +928,7 @@ export default class SearchLightExt extends Extension {
           this._edges[3].y = this.height - 2;
         }
         this._search.show();
+        this._researchOnTrailingSpace();
       },
     );
 

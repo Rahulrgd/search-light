@@ -124,6 +124,11 @@ export const SettingsKeys = () => {
       default_value: '',
       widget_type: 'string',
     },
+    'web-search-exclusive': { default_value: true, widget_type: 'switch' },
+    'web-search-fallback': { default_value: true, widget_type: 'switch' },
+    'web-search-fallback-engine': { default_value: 'g', widget_type: 'string' },
+    'web-search-open-urls': { default_value: true, widget_type: 'switch' },
+    'web-search-favicons': { default_value: true, widget_type: 'switch' },
     'animation-speed': {
       default_value: 100,
       widget_type: 'scale',

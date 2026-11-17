@@ -176,15 +176,42 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
   `ExtensionPreferences` instead.
 
 ### Phase 3: UX polish
-- [ ] 3.1 Keyword hint: just `yt` or `yt ` → placeholder result "YouTube: type to search".
-- [ ] 3.2 Exclusive mode: when a keyword matches, suppress other providers'
-      results (wrap or filter `_searchResults` `_doSearch`/`_providers`).
-- [ ] 3.3 Fallback engine result (at the bottom when there is no keyword).
-- [ ] 3.4 URL detection → "Open <url>" result.
-- [ ] 3.5 Favicons: download once to `~/.cache/search-light/icons/` and reuse
-      (fallback: `web-browser-symbolic`).
-- [ ] 3.6 Popup must close properly after activation (check the existing
-      `mainContainer.opacity = 0` logic).
+- [x] 3.1 Keyword hint, Flow Launcher style: a keyword only counts with a space
+      after it. `g` = normal search (gedit…), `g ` = "Google: type to search…",
+      `g naruto` = search. Uses the raw entry text (the shell's terms drop the
+      trailing space). The shell also skips searches whose terms are unchanged,
+      so `_researchOnTrailingSpace()` forces a re-search when the space is typed
+      or deleted.
+- [x] 3.2 Exclusive mode (`web-search-exclusive`, default on): wraps
+      `SearchResultsView._updateResults`. While a keyword is active, the other
+      providers get `[]`; their real results stay cached for subsearches. The
+      wrapper is removed on disable.
+- [x] 3.3 Fallback (`web-search-fallback` + `web-search-fallback-engine`, default
+      `g`): a separate `WebFallbackProvider` kept **last**, so an app result keeps
+      Enter. It becomes the default only when nothing else matches. It is quiet
+      when a keyword or URL result covers the text. The shell re-appends remote
+      providers when the installed apps change, so the wrapper moves it back
+      to last.
+- [x] 3.4 Typed URLs (`web-search-open-urls`): `https://…`, `localhost:8080`,
+      `www.…`, and bare domains with a known TLD (`github.com/x`). `notes.txt`
+      and `v1.2` are not treated as URLs.
+- [x] 3.5 Favicons (`web-search-favicons`): `providers/favicons.js` uses Soup 3
+      and the Google s2 service, downloads once into
+      `~/.cache/search-light/favicons/<host>.png` (temp file + rename), and fails
+      silently. The settings rows show the cached icon too.
+- [x] 3.6 Popup closes after activation (done in Phase 1, see 1.9).
+- [x] 3.7 Bug found: result ids were fixed (`web-search`), and the shell caches
+      result actors by id without clearing them between searches, so
+      `g naruto` → `g naruto shippuden` kept showing the old text. Ids now encode
+      their content (`web:g:naruto`, `url:…`, `fallback:…`).
+- [x] 3.8 Settings: "Behaviour" group (4 switches + a fallback engine dropdown
+      that shows the engine really used).
+- [x] 3.9 Tests: core +27 unit checks, e2e now 36 checks (real Space/Backspace/
+      Enter, exclusive on/off, fallback order + engine, URLs, seeded favicon,
+      stale-label regression), prefs +12 UI checks. `tests/run_all.sh` is green.
+- Note: in the headless shell, `_defaultResult` stays null for app-grid results.
+  v37 does the same, so the test checks instead that Enter on an app match
+  does not trigger the fallback.
 
 ### Phase 4: Search suggestions (opt-in)
 - [ ] 4.1 Async HTTP with `Soup 3`, 250 ms debounce, `Gio.Cancellable` to cancel old
@@ -226,3 +253,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | Phase 1 ✅ (except the 1.8 manual browser check) | `g`/`yt`/`w`/… keyword search works headless on GNOME 46; 10 default engines hardcoded in `providers/webSearchCore.js`. |
 | 2026-11-17 | Phase 1 committed (367c3d1) · Phase 2 ✅ | Web Search settings page, live reload, `tests/run_all.sh` (4 suites green). |
 | 2026-11-17 | v101 installed on the real desktop | `make build install-zip` + re-login; web search and the settings page confirmed working by hand. Use `install-zip` (a clean install), not `install` (which copies tests/ and scripts/ too). |
+| 2026-11-17 | Branch pushed · Phase 3 ✅ | Space-after-keyword, exclusive mode, fallback (last), typed URLs, favicons, stale-label fix. |

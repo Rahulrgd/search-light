@@ -142,6 +142,31 @@
         <summary>Web search engines</summary>
         <description>JSON array of {keyword, name, url, enabled}; url contains {q}. Empty means the built-in defaults.</description>
     </key>
+    <key type="b" name="web-search-exclusive">
+        <default>true</default>
+        <summary>Only web results after a keyword</summary>
+        <description>When the text starts with a keyword and a space, hide app and file results.</description>
+    </key>
+    <key type="b" name="web-search-fallback">
+        <default>true</default>
+        <summary>Fallback web search</summary>
+        <description>Offer "Search the web for …" at the end of the results.</description>
+    </key>
+    <key type="s" name="web-search-fallback-engine">
+        <default>"g"</default>
+        <summary>Fallback engine keyword</summary>
+        <description>Keyword of the engine used by the fallback; the first enabled engine if missing.</description>
+    </key>
+    <key type="b" name="web-search-open-urls">
+        <default>true</default>
+        <summary>Open typed URLs</summary>
+        <description>Offer "Open …" when the text looks like a URL or domain.</description>
+    </key>
+    <key type="b" name="web-search-favicons">
+        <default>true</default>
+        <summary>Site icons</summary>
+        <description>Download each engine's icon once (Google favicon service) and cache it.</description>
+    </key>
     <key type="d" name="animation-speed">
 	<default>100</default>
 	<summary>Animation speed</summary>

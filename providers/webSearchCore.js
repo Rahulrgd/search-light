@@ -18,20 +18,62 @@ export const DEFAULT_ENGINES = [
 ];
 
 /**
- * Match search terms against the engine list.
- * @param {string[]} terms - whitespace-split search text (case preserved)
+ * Match the raw search text against the engine list. Like Flow Launcher, a
+ * keyword only counts once a space follows it: "g" is a normal search (gedit…),
+ * "g " shows the engine hint, "g naruto" searches.
+ * @param {string} text - the search entry text, untrimmed
  * @param {object[]} engines - [{keyword, name, url, enabled?}]
- * @returns {{engine: object, query: string} | null} null when the first term is
- *   not a keyword. query is '' when only the keyword was typed.
+ * @returns {{engine: object, query: string} | null} query is '' for "g ".
  */
-export function matchEngine(terms, engines) {
-  if (!terms || terms.length === 0) return null;
-  const keyword = terms[0].toLowerCase();
+export function matchQuery(text, engines) {
+  const m = /^\s*(\S+)\s+([\s\S]*)$/.exec(text ?? '');
+  if (!m) return null;
+  const keyword = m[1].toLowerCase();
   const engine = engines.find(
     (e) => e.enabled !== false && e.keyword.toLowerCase() === keyword,
   );
   if (!engine) return null;
-  return { engine, query: terms.slice(1).join(' ') };
+  return { engine, query: m[2].trim().replace(/\s+/g, ' ') };
+}
+
+// Bare domains need a known TLD, so "file.txt" or "v1.2" are not URLs.
+const COMMON_TLDS = new Set(
+  ('com org net io dev app ai co in me info xyz tv gov edu uk de fr jp ' +
+    'us ca au eu tech site online blog page cloud so gg ly fm to sh')
+    .split(' '),
+);
+
+/**
+ * The URL to open when the text looks like one, else null.
+ * Accepts "https://…", "http://…", "localhost:8080/x", "www.foo.bar",
+ * "github.com/foo" (known TLD). Bare domains get https://.
+ */
+export function detectUrl(text) {
+  const t = (text ?? '').trim();
+  if (!t || /\s/.test(t)) return null;
+  if (/^https?:\/\/[^/\s]+/i.test(t)) return t;
+  if (/^localhost(:\d+)?(\/\S*)?$/i.test(t)) return `http://${t}`;
+  const m = /^((?:[a-z0-9-]+\.)+([a-z]{2,}))(:\d+)?([/?#]\S*)?$/i.exec(t);
+  if (!m) return null;
+  const host = m[1].toLowerCase();
+  if (!host.startsWith('www.') && !COMMON_TLDS.has(m[2].toLowerCase())) return null;
+  return `https://${t}`;
+}
+
+/**
+ * Engine for the "search the web for …" fallback: the one with `keyword` if it
+ * exists and is enabled, else the first enabled engine, else null.
+ */
+export function pickFallbackEngine(engines, keyword) {
+  const enabled = engines.filter((e) => e.enabled !== false);
+  const wanted = (keyword ?? '').toLowerCase();
+  return enabled.find((e) => e.keyword.toLowerCase() === wanted) ?? enabled[0] ?? null;
+}
+
+/** Host of an engine URL template ("www.google.com"), for its favicon. */
+export function faviconHost(urlTemplate) {
+  const m = /^https?:\/\/([^/?#:]+)/i.exec(urlTemplate ?? '');
+  return m ? m[1].toLowerCase() : null;
 }
 
 /** Put the URL-encoded query into the engine's URL template. */

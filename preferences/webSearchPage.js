@@ -1,24 +1,39 @@
-// "Web Search" preferences page: turn keywords on/off and add, edit, delete,
-// enable/disable, test and reset search engines.
+// "Web Search" preferences page: turn keywords on/off, behaviour switches
+// (exclusive, fallback, URLs, icons), and add, edit, delete, enable/disable,
+// test and reset search engines.
 //
 // WebSearchEngines is the model (GSettings <-> engine list) and holds no widgets,
 // so tests can drive it directly; buildWebSearchPage() is the UI on top of it.
 
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import {
   buildUrl,
   defaultEngines,
+  faviconHost,
   normalizeEngine,
+  pickFallbackEngine,
   resolveEngines,
   validateEngine,
 } from '../providers/webSearchCore.js';
 
 const KEY_ENABLED = 'web-search-enabled';
 const KEY_ENGINES = 'web-search-engines';
+const KEY_FALLBACK = 'web-search-fallback';
+const KEY_FALLBACK_ENGINE = 'web-search-fallback-engine';
 const TEST_QUERY = 'GNOME';
+
+// Same place the extension's FaviconCache writes to (providers/favicons.js).
+function cachedFavicon(urlTemplate) {
+  const host = faviconHost(urlTemplate);
+  if (!host) return null;
+  const path = GLib.build_filenamev([
+    GLib.get_user_cache_dir(), 'search-light', 'favicons', `${host}.png`]);
+  return GLib.file_test(path, GLib.FileTest.EXISTS) ? path : null;
+}
 
 export class WebSearchEngines {
   constructor(settings) {
@@ -148,6 +163,59 @@ export function buildWebSearchPage(settings, window, options = {}) {
   general.add(enabledRow);
   page.add(general);
 
+  // --- behaviour ---
+  const behaviour = new Adw.PreferencesGroup({ title: 'Behaviour' });
+  settings.bind(KEY_ENABLED, behaviour, 'sensitive', Gio.SettingsBindFlags.GET);
+  const fallbackRow = new Adw.ComboRow({
+    title: 'Fallback search engine',
+    subtitle: 'Used when no keyword is typed',
+  });
+  settings.bind(KEY_FALLBACK, fallbackRow, 'sensitive', Gio.SettingsBindFlags.GET);
+  const switches = {};
+  for (const [key, title, subtitle] of [
+    ['web-search-exclusive', 'Only web results after a keyword',
+      'With “g naruto”, hide app and file results'],
+    [KEY_FALLBACK, 'Fallback web search',
+      'Offer “Search the web for …” at the end of the results'],
+    ['web-search-open-urls', 'Open typed URLs',
+      'Offer “Open …” for text like github.com/user or https://…'],
+    ['web-search-favicons', 'Site icons',
+      'Download each engine’s icon once (Google favicon service)'],
+  ]) {
+    const row = new Adw.SwitchRow({ title, subtitle });
+    settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+    behaviour.add(row);
+    switches[key] = row;
+    // The engine choice sits right under its switch.
+    if (key === KEY_FALLBACK) behaviour.add(fallbackRow);
+  }
+  page.add(behaviour);
+
+  // Choices = enabled engines; shows the engine the extension will really use.
+  let fallbackChoices = [];
+  let syncingFallback = false;
+  function syncFallbackRow() {
+    syncingFallback = true;
+    try {
+      fallbackChoices = model.engines.filter((e) => e.enabled !== false);
+      fallbackRow.model = Gtk.StringList.new(
+        fallbackChoices.map((e) => `${e.name} (${e.keyword})`));
+      const current = pickFallbackEngine(
+        model.engines, settings.get_string(KEY_FALLBACK_ENGINE));
+      const index = current ? fallbackChoices.indexOf(current) : -1;
+      fallbackRow.selected = index >= 0 ? index : Gtk.INVALID_LIST_POSITION;
+    } finally {
+      syncingFallback = false;
+    }
+  }
+  fallbackRow.connect('notify::selected', () => {
+    if (syncingFallback) return;
+    const engine = fallbackChoices[fallbackRow.selected];
+    if (engine) settings.set_string(KEY_FALLBACK_ENGINE, engine.keyword);
+  });
+  const fallbackEngineId = settings.connect(
+    `changed::${KEY_FALLBACK_ENGINE}`, () => syncFallbackRow());
+
   // --- engine list ---
   const addButton = iconButton('list-add-symbolic', 'Add search engine');
   const enginesGroup = new Adw.PreferencesGroup({
@@ -185,6 +253,12 @@ export function buildWebSearchPage(settings, window, options = {}) {
     // first and parsed as markup ("&" in URLs breaks Pango markup).
     row.title = engine.name;
     row.subtitle = engine.url;
+    const icon = cachedFavicon(engine.url);
+    row.add_prefix(
+      icon
+        ? Gtk.Image.new_from_file(icon)
+        : Gtk.Image.new_from_icon_name('web-browser-symbolic'),
+    );
     row.add_prefix(
       new Gtk.Label({
         label: engine.keyword,
@@ -321,12 +395,15 @@ export function buildWebSearchPage(settings, window, options = {}) {
   addButton.connect('clicked', () => openEditor(null));
   resetButton.connect('clicked', () => confirmReset());
   model.onChanged(render);
+  model.onChanged(syncFallbackRow);
   render();
+  syncFallbackRow();
 
   window.connect('close-request', () => {
+    settings.disconnect(fallbackEngineId);
     model.destroy();
     return false;
   });
 
-  return { page, model, openEditor, confirmReset, enginesGroup };
+  return { page, model, openEditor, confirmReset, enginesGroup, fallbackRow, switches };
 }
