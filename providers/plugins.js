@@ -13,8 +13,8 @@ import {
   PLUGINS,
   matchPluginKeyword,
   resolvePluginConfig,
+  searchGlobalPlugins,
   searchKeywordPlugin,
-  searchSystemCommands,
 } from './pluginsCore.js';
 
 class BasePluginProvider extends BaseWebProvider {
@@ -72,11 +72,23 @@ export class PluginGlobalProvider extends BasePluginProvider {
     super({ id: 'search-light-plugins-global', ...opts });
     /** () => true while a keyword (web or plugin) owns the text */
     this.isClaimed = () => false;
+    /** () => {rates, date} | null — exchange rates, see providers/rates.js */
+    this.getRates = () => null;
+    /** () => void — start loading rates (results re-run when they arrive) */
+    this.requestRates = () => {};
   }
 
   _compute(text) {
-    if (!this.config.system?.enabled || this.isClaimed()) return [];
-    return this._toItems(searchSystemCommands(text));
+    if (this.isClaimed()) return [];
+    const r = this.getRates();
+    const { items, usesRates } = searchGlobalPlugins(text, {
+      config: this.config,
+      rates: r?.rates ?? null,
+      ratesDate: r?.date,
+    });
+    // Fetches only when the rates are missing or older than 12 h.
+    if (usesRates) this.requestRates();
+    return this._toItems(items);
   }
 }
 

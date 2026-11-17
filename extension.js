@@ -49,6 +49,7 @@ import {
   PluginGlobalProvider,
 } from './providers/plugins.js';
 import { PluginActions } from './providers/pluginActions.js';
+import { RatesCache } from './providers/rates.js';
 import { pushHistory, resolvePluginConfig } from './providers/pluginsCore.js';
 import { resolveEngines } from './providers/webSearchCore.js';
 import { FaviconCache } from './providers/favicons.js';
@@ -317,6 +318,8 @@ export default class SearchLightExt extends Extension {
     this._pluginKeyword = null;
     this._pluginGlobal = null;
     this._pluginActions = null;
+    this._rates?.destroy();
+    this._rates = null;
     closeHttp();
     this._favicons?.destroy();
     this._favicons = null;
@@ -460,6 +463,10 @@ export default class SearchLightExt extends Extension {
     const keywordActive = () =>
       !!this._webSearch.currentMatch() || !!this._pluginKeyword.currentMatch();
     this._pluginGlobal.isClaimed = keywordActive;
+    this._rates ??= new RatesCache();
+    this._pluginGlobal.getRates = () => this._rates?.get();
+    this._pluginGlobal.requestRates = () =>
+      this._rates?.ensureFresh(() => this._rerunSearch());
     this._webFallback.isClaimed = () =>
       keywordActive() ||
       (this._webSearch.enabled &&
@@ -618,6 +625,15 @@ export default class SearchLightExt extends Extension {
     entry.set_text(completion);
     entry.clutter_text.set_cursor_position(-1);
     return Clutter.EVENT_STOP;
+  }
+
+  // Run the current search again (e.g. exchange rates just arrived).
+  _rerunSearch() {
+    const sr = this._searchResults;
+    const terms = sr?._terms;
+    if (!this._visible || !terms?.length) return;
+    sr._terms = [];
+    sr.setTerms(terms);
   }
 
   // The shell skips a search whose terms did not change, and "g" → "g " (or

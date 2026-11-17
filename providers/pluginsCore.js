@@ -1,3 +1,5 @@
+import { convertCurrency, convertUnits } from './convertCore.js';
+
 // Flow Launcher-style command plugins, as pure logic (no Shell imports), so
 // they can be unit tested with plain gjs: gjs -m tests/test_plugins_core.js
 //
@@ -33,6 +35,22 @@ export const PLUGINS = [
     description: 'Stop one of your processes: “kill firefox”',
     defaultKeyword: 'kill',
     icon: 'process-stop-symbolic',
+  },
+  {
+    id: 'units',
+    name: 'Unit converter',
+    description: 'GNOME Calculator already converts most units in search; ' +
+      'turn on for extras (acres, Mbps, stones…): “10 km to mi”; Enter copies',
+    defaultKeyword: null, // global
+    defaultEnabled: false, // avoid a duplicate row next to Calculator's
+    icon: 'accessories-calculator-symbolic',
+  },
+  {
+    id: 'currency',
+    name: 'Currency converter',
+    description: '“100 usd to inr”, “₹500 in $”; rates from open.er-api.com (12 h cache)',
+    defaultKeyword: null, // global
+    icon: 'accessories-calculator-symbolic',
   },
   {
     id: 'system',
@@ -82,7 +100,7 @@ export function resolvePluginConfig(json) {
       ? s.keyword.trim()
       : p.defaultKeyword;
     config[p.id] = {
-      enabled: s.enabled !== false,
+      enabled: typeof s.enabled === 'boolean' ? s.enabled : p.defaultEnabled !== false,
       keyword: p.defaultKeyword === null ? null : keyword,
     };
   }
@@ -278,4 +296,59 @@ export function terminalArgv(terminal, userShell, command) {
   const flags = TERMINAL_EXEC_FLAGS[base] ?? ['-e'];
   const sh = userShell || '/bin/bash';
   return [terminal, ...flags, sh, '-c', `${command}; exec "${sh}"`];
+}
+
+const CATEGORY_NAMES = {
+  length: 'Length', mass: 'Mass', volume: 'Volume', area: 'Area', speed: 'Speed',
+  time: 'Time', data: 'Data', temperature: 'Temperature',
+};
+
+/**
+ * Global plugin items for plain text: conversions first, then system
+ * commands.
+ * @param {object} ctx - {config, rates: {CODE: per USD}|null, ratesDate: string}
+ * @returns {{items: object[], needsRates: boolean, usesRates: boolean}}
+ *   needsRates = a currency conversion was recognized but no rates are loaded
+ *   yet; usesRates = a currency conversion was recognized (refresh if stale)
+ */
+export function searchGlobalPlugins(text, ctx) {
+  const items = [];
+  let needsRates = false;
+  let usesRates = false;
+  if (ctx.config.units?.enabled) {
+    const r = convertUnits(text);
+    if (r) {
+      items.push({
+        key: `units:${r.text}`,
+        name: r.text,
+        description: `${CATEGORY_NAMES[r.category]} · Enter copies ${r.copy}`,
+        icon: 'accessories-calculator-symbolic',
+        action: { type: 'copy', text: r.copy },
+      });
+    }
+  }
+  if (ctx.config.currency?.enabled) {
+    const r = convertCurrency(text, ctx.rates ?? null);
+    usesRates = !!r;
+    if (r?.pending) {
+      needsRates = true;
+      items.push({
+        key: 'currency:pending',
+        name: r.text,
+        description: 'open.er-api.com',
+        icon: 'accessories-calculator-symbolic',
+        action: { type: 'none' },
+      });
+    } else if (r) {
+      items.push({
+        key: `currency:${r.text}`,
+        name: r.text,
+        description: `Rates ${ctx.ratesDate ?? ''} · Enter copies ${r.copy}`.replace('Rates  ·', 'Rates ·'),
+        icon: 'accessories-calculator-symbolic',
+        action: { type: 'copy', text: r.copy },
+      });
+    }
+  }
+  if (ctx.config.system?.enabled) items.push(...searchSystemCommands(text));
+  return { items, needsRates, usesRates };
 }

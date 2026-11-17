@@ -266,7 +266,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       the terminal stays open. The command is a single argv element. History
       (`plugin-shell-history`, 20 entries) is shown for `>` and filtered by
       prefix.
-- [ ] 5.4 Unit + currency converter revive.
+- [x] 5.4 Unit + currency converters (global plugins; rewritten, since the
+      old upstream code fetched rates synchronously on the shell thread).
+      `providers/convertCore.js` is pure: length, mass, volume, area, speed,
+      time, data (bits ≠ bytes; "mb" = megabytes), temperature. Separators
+      `to/in/into/as/->/=`, and every split is tried, so "12 in to cm" works.
+      Currency takes ISO codes, symbols (₹ $ € £ ¥…) and names ("rupees").
+      Rates come from open.er-api.com, async, cached 12 h in
+      `~/.cache/search-light/rates.json`, retried after 5 min on failure,
+      fetched only when a currency conversion is typed. The search re-runs
+      when they arrive. Enter copies the number.
+      **Units default off**: GNOME Calculator's own search provider already
+      converts most units (it did not do currencies in testing), so ours
+      would duplicate its row. Currency defaults on. The old non-working
+      General-tab switches (`unit-converter`, `currency-converter`) are
+      hidden.
 - [ ] 5.5 Browser bookmarks `b`.
 - [x] 5.6 Process killer `kill`: the user's own processes from `/proc` (owner
       taken from the directory listing, 2 s cache, ~50 ms), biggest RSS first.
@@ -309,3 +323,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | Branch pushed · Phase 3 ✅ | Space-after-keyword, exclusive mode, fallback (last), typed URLs, favicons, stale-label fix. |
 | 2026-11-17 | Row polish committed (10c495c) · Phase 4 ✅ | Live suggestions (opt-in), Tab completion, "Suggestions" section. |
 | 2026-11-17 | Phase 4 committed (1a54449) · Phase 5 part 1 ✅ | Plugin registry, `?` help, system commands, `>` shell, `kill`, Commands settings page. |
+| 2026-11-17 | Phase 5 part 1 committed (322f400) · 5.4 ✅ | Unit + currency converters (units off by default next to GNOME Calculator). |

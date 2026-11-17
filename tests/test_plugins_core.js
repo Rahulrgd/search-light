@@ -9,6 +9,7 @@ import {
   parseProcStatus,
   formatKb,
   terminalArgv,
+  searchGlobalPlugins,
 } from '../providers/pluginsCore.js';
 import { DEFAULT_ENGINES } from '../providers/webSearchCore.js';
 import System from 'system';
@@ -25,7 +26,7 @@ const m = (t, c = cfg) => { const r = matchPluginKeyword(t, c); return r ? [r.pl
 
 // config
 eq('defaults', Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, [v.enabled, v.keyword]])),
-  { help: [true, '?'], shell: [true, '>'], kill: [true, 'kill'], system: [true, null] });
+  { help: [true, '?'], shell: [true, '>'], kill: [true, 'kill'], units: [false, null], currency: [true, null], system: [true, null] });
 const custom = resolvePluginConfig(JSON.stringify({ kill: { keyword: 'k' }, shell: { enabled: false }, system: { keyword: 'sys' }, help: { keyword: 'a b' } }));
 eq('custom keyword, disabled plugin, global stays global, bad keyword ignored',
   [custom.kill.keyword, custom.shell.enabled, custom.system.keyword, custom.help.keyword], ['k', false, null, '?']);
@@ -95,6 +96,21 @@ eq('gnome-terminal argv', terminalArgv('/usr/bin/gnome-terminal', '/bin/zsh', 'h
 eq('x-terminal-emulator uses -e', terminalArgv('x-terminal-emulator', '', 'ls')[1], '-e');
 eq('unknown terminal falls back to -e', terminalArgv('myterm', '/bin/bash', 'ls').slice(0, 2), ['myterm', '-e']);
 eq('command stays one argv element', terminalArgv('kgx', '/bin/bash', 'echo "a b"; rm -i x').length, 5);
+
+// global plugins: conversions + system commands
+const unitsOn = resolvePluginConfig(JSON.stringify({ units: { enabled: true } }));
+eq('units off by default, can be turned on', [cfg.units.enabled, unitsOn.units.enabled], [false, true]);
+const gctx = { config: unitsOn, rates: { USD: 1, INR: 83 }, ratesDate: '2026-11-17' };
+const g = (t, c = gctx) => searchGlobalPlugins(t, c);
+eq('units row copies the value', g('10 km to mi').items[0].action, { type: 'copy', text: '6.213711922' });
+eq('currency row', g('100 usd to inr').items.map((i) => [i.name, i.description]),
+  [['100.00 USD = 8,300.00 INR', 'Rates 2026-11-17 · Enter copies 8300.00']]);
+eq('no rates: pending row + needsRates', [g('1 usd to inr', { ...gctx, rates: null }).needsRates, g('1 usd to inr', { ...gctx, rates: null }).items[0].action.type], [true, 'none']);
+eq('units do not ask for rates', g('10 km to mi', { ...gctx, rates: null }).needsRates, false);
+eq('currency with rates: usesRates (refresh if stale)', [g('1 usd to inr').usesRates, g('10 km to mi').usesRates], [true, false]);
+eq('system commands still listed', g('reboot').items.map((i) => i.key), ['system:restart']);
+const off = resolvePluginConfig(JSON.stringify({ units: { enabled: false }, currency: { enabled: false } }));
+eq('disabled converters: nothing', [g('10 km to mi', { ...gctx, config: off }).items, g('1 usd to inr', { ...gctx, config: off }).items], [[], []]);
 
 print(failed ? `\n${failed} failed` : '\nall passed');
 System.exit(failed ? 1 : 0);

@@ -2,6 +2,7 @@
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as SystemActions from 'resource:///org/gnome/shell/misc/systemActions.js';
@@ -22,6 +23,9 @@ export class PluginActions {
     this._afterHide = afterHide;
     this._onShellCommand = onShellCommand ?? (() => {});
     this._procCache = null;
+    // Replaceable in tests (the headless shell has no readable clipboard).
+    this.setClipboard = (text) =>
+      St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
   }
 
   run(action) {
@@ -38,6 +42,10 @@ export class PluginActions {
         return;
       case 'shell':
         this._afterHide(() => this._shell(action.command), 0);
+        return;
+      case 'copy':
+        this.setClipboard(action.text);
+        this._afterHide(() => {}, 0);
         return;
       case 'kill':
         this._afterHide(() => this._kill(action.pid), 0);

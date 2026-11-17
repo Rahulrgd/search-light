@@ -127,7 +127,9 @@ export default class Preferences extends ExtensionPreferences {
         .set_from_file(`${UIFolderPath}/images/qr_icedman.png`);
     }
 
-    // builder.get_object("providers-group").visible = false;
+    // The old unit/currency switches did nothing (their providers were removed
+    // upstream); the converters are now plugins on the Commands page.
+    builder.get_object('providers-group').visible = false;
 
     let settings = this.getSettings(schemaId);
     window.add(buildWebSearchPage(settings, window).page);

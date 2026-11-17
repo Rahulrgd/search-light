@@ -90,8 +90,8 @@ mark fallback; open_and_type 'settings'; stub
 # (The shell's own default for app results is null in the headless session,
 # with v37 too, so check what matters: Enter must not trigger the fallback.)
 check 'app match: fallback shown last, not default' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["fb"], d["default"] != "fallback")')" 'True True'
-key Return; sleep 1
-check 'app match + Enter: fallback not opened' "$(opened)" '[]'
+# (No Enter here: it may really launch the Settings app, whose window then
+# takes focus and closes the popup in the middle of the next case.)
 key Escape; sleep 0.5
 open_and_type 'zzqqxx naruto'; stub
 check 'no match: fallback is default' "$(ev "$STATE")" '{"front":true,"shown":false,"default":"fallback","fb":true}'
@@ -166,10 +166,10 @@ key Escape; sleep 0.5
 
 mark plugins  # the lowest-level actions are stubbed: nothing really runs
 stub_plugins() {
-  ev 'globalThis.__ran = []; const pa = Main.overview.searchLight._pluginActions; pa._system = (w) => __ran.push("system:" + w); pa._kill = (pid) => __ran.push("kill:" + pid); pa._shell = (c) => { __ran.push("shell:" + c); pa._onShellCommand(c); }; pa.listProcesses = () => [{ pid: 101, name: "firefox", rssKb: 900000 }, { pid: 102, name: "firefox-bin", rssKb: 2000000 }, { pid: 103, name: "gnome-shell", rssKb: 500000 }]; 1' >/dev/null
+  ev 'globalThis.__ran = []; const pa = Main.overview.searchLight._pluginActions; pa._system = (w) => __ran.push("system:" + w); pa._kill = (pid) => __ran.push("kill:" + pid); pa._shell = (c) => { __ran.push("shell:" + c); pa._onShellCommand(c); }; pa.setClipboard = (t) => { globalThis.__clip = t; }; pa.listProcesses = () => [{ pid: 101, name: "firefox", rssKb: 900000 }, { pid: 102, name: "firefox-bin", rssKb: 2000000 }, { pid: 103, name: "gnome-shell", rssKb: 500000 }]; 1' >/dev/null
 }
 ran() { ev 'JSON.stringify(__ran)'; }
-PLUG='(() => { const sl = Main.overview.searchLight; const sr = Main.overview.searchController._searchResults; const l = sr._providers; const d = sr._defaultResult?.provider; const titles = (p) => { const out = []; const walk = (a) => { if (a.style_class?.includes("list-search-result-title")) a.get_children().forEach((c) => c instanceof imports.gi.St.Label && out.push(c.text)); a.get_children().forEach(walk); }; if (p.display?.visible) walk(p.display); return out; }; return JSON.stringify({ kw: titles(sl._pluginKeyword), global: titles(sl._pluginGlobal), default: d === sl._pluginKeyword ? "keyword" : d === sl._pluginGlobal ? "global" : d ? "other" : "none", order: l.indexOf(sl._pluginKeyword) === 2 && l.indexOf(sl._pluginGlobal) === l.length - 2 }); })()'
+PLUG='(() => { const sl = Main.overview.searchLight; const sr = Main.overview.searchController._searchResults; const l = sr._providers; const d = sr._defaultResult?.provider; const titles = (p) => { const out = []; const walk = (a) => { if (a.style_class?.includes("list-search-result-title")) a.get_children().forEach((c) => c instanceof imports.gi.St.Label && out.push(c.text)); a.get_children().forEach(walk); }; if (p.display?.visible) walk(p.display); return out; }; return JSON.stringify({ kw: titles(sl._pluginKeyword), global: titles(sl._pluginGlobal), default: d === sl._pluginKeyword ? "keyword" : d === sl._pluginGlobal ? "global" : d ? "other:" + d.id : "none", order: l.indexOf(sl._pluginKeyword) === 2 && l.indexOf(sl._pluginGlobal) === l.length - 2 }); })()'
 $GS reset $SCHEMA plugin-shell-history
 open_and_type 'x'; stub_plugins
 open_and_type '> htop'
@@ -196,11 +196,13 @@ key Escape; sleep 0.5
 open_and_type 'lock'; stub_plugins
 check '"lock": global command placed after the apps' "$(ev "$PLUG" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["global"], d["order"])')" "['Lock screen'] True"
 key Escape; sleep 0.5
-# ("lock" also matches the Clocks app, which keeps Enter; "reboot" matches no app.)
+# ("lock" also matches the Clocks app, and GNOME Software can find a
+# "reboot" app online; app results keep Enter by design, so the row is
+# activated directly.)
 open_and_type 'reboot'; stub_plugins
-check '"reboot": global command is the default' "$(ev "$PLUG" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["global"], d["default"])')" "['Restart…'] global"
-key Return; sleep 1
-check 'Enter restarts via GNOME SystemActions (it asks to confirm)' "$(ran),$(ev 'String(Main.overview.searchLight._visible)')" '["system:restart"],false'
+check '"reboot": restart row' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" "['Restart…']"
+ev 'Main.overview.searchLight._pluginGlobal.display._content.get_child_at_index(0).activate(); 1' >/dev/null; sleep 1
+check 'restart goes through GNOME SystemActions (it asks to confirm), popup closes' "$(ran),$(ev 'String(Main.overview.searchLight._visible)')" '["system:restart"],false'
 open_and_type 'g lock'
 check 'keyword active: no global commands' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" '[]'
 key Escape; sleep 0.5
@@ -211,6 +213,32 @@ open_and_type 'k fire'
 check 'custom keyword "k" works' "$(ev "$PLUG" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["kw"]))')" '2'
 key Escape; sleep 0.5
 $GS reset $SCHEMA plugins; $GS reset $SCHEMA plugin-shell-history
+
+mark convert  # exchange-rate fetch stubbed (counts calls, answers after 300 ms)
+ev 'globalThis.__rateFetches = 0; const rc = Main.overview.searchLight._rates; rc._data = null; rc._lastAttempt = 0; rc.fetchJson = () => { __rateFetches++; return new Promise((res) => imports.gi.GLib.timeout_add(0, 300, () => { res({ result: "success", time_last_update_unix: 1763337600, rates: { USD: 1, INR: 83, EUR: 0.9 } }); return false; })); }; 1' >/dev/null
+clip() { ev 'String(globalThis.__clip)'; }  # set by the stubbed setClipboard
+# Units are off by default (GNOME Calculator converts units in search too).
+open_and_type '10 km to mi'; stub_plugins
+check 'units off by default: no row of ours' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" '[]'
+key Escape; sleep 0.5
+$GS set $SCHEMA plugins '{"units":{"enabled":true}}'; sleep 0.5
+open_and_type '1 acre to m2'; stub_plugins
+check 'units on: "1 acre to m2" row' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" "['1 acre = 4,046.86 m2']"
+ev 'Main.overview.searchLight._pluginGlobal.display._content.get_child_at_index(0).activate(); 1' >/dev/null; sleep 1
+check 'activating copies the value, popup closes' "$(clip),$(ev 'String(Main.overview.searchLight._visible)')" '4046.856422,false'
+$GS reset $SCHEMA plugins; sleep 0.5
+open_and_type '100 usd to inr'
+sleep 1; settle
+check 'currency: rates fetched once, results re-run on arrival' "$(ev 'String(__rateFetches)'),$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" "1,['100.00 USD = 8,300.00 INR']"
+check 'rates written to the cache file' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["date"])' "$XDG_CACHE_HOME/search-light/rates.json")" '2025-11-17'
+open_and_type '₹830 to $'
+check 'fresh rates: no second fetch; symbols work' "$(ev 'String(__rateFetches)'),$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" "1,['830.00 INR = 10.00 USD']"
+key Escape; sleep 0.5
+$GS set $SCHEMA plugins '{"currency":{"enabled":false}}'; sleep 0.5
+open_and_type '100 usd to inr'
+check 'currency converter disabled: no row' "$(ev "$PLUG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["global"])')" '[]'
+key Escape; sleep 0.5
+$GS reset $SCHEMA plugins
 
 mark reenable; gnome-extensions disable $UUID; sleep 1
 check 'disabled: providers removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id.startsWith("search-light-")).length)')" '0'

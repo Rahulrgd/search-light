@@ -209,7 +209,7 @@ pump(300);
 shoot('4-commands-page');
 const plugins = () => JSON.parse(settings.get_string('plugins') || '{}');
 eq('commands: one row per plugin, global has no keyword field',
-  [Object.keys(cp.rows).length, cp.rows.system.entry, cp.rows.kill.entry.text], [4, null, 'kill']);
+  [Object.keys(cp.rows).length, cp.rows.system.entry, cp.rows.units.entry, cp.rows.kill.entry.text], [6, null, null, 'kill']);
 cp.rows.kill.entry.text = 'k';
 eq('keyword change saved', plugins().kill.keyword, 'k');
 cp.rows.kill.entry.text = 'k x';

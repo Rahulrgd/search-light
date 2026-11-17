@@ -18,6 +18,7 @@ run() {  # run <name> <command...>
 }
 run 'core unit tests'      gjs -m tests/test_websearch_core.js
 run 'plugin unit tests'    gjs -m tests/test_plugins_core.js
+run 'converter unit tests' gjs -m tests/test_convert_core.js
 run 'shell e2e + smoke'    scripts/headless.sh --unsafe -- bash -c 'tests/e2e_websearch.sh && tests/smoke.sh'
 run 'web search prefs UI'  scripts/headless.sh -- tests/test_websearch_prefs.sh
 run 'full prefs window'    scripts/headless.sh -- tests/test_prefs_window.sh
