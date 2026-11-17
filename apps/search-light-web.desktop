@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Web Search
+Comment=Search the web with action keywords
+Icon=web-browser
+Exec=xdg-open https://duckduckgo.com
+Terminal=false

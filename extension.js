@@ -38,6 +38,7 @@ import { BlurEffect } from './effects/blur_effect.js';
 
 import { schemaId, SettingsKeys } from './preferences/keys.js';
 import { KeyboardShortcuts } from './keybinding.js';
+import { WebSearchProvider } from './providers/webSearch.js';
 
 import {
   Extension,
@@ -233,6 +234,10 @@ export default class SearchLightExt extends Extension {
     this._loTimer.runOnce(() => {
       this._createIndicator();
     }, 1500);
+    // Providers stay registered for the whole enabled lifetime (they only answer
+    // to their own keywords, so they are harmless in the normal overview too).
+    // Removing them on every popup hide raced with in-flight searches, which
+    // then wrote into the destroyed provider display.
     this._updateProviders();
     this._updateWindowEffect();
     this._updateBlurredBackground();
@@ -274,6 +279,7 @@ export default class SearchLightExt extends Extension {
 
     this._removeProviders();
     this._providers = null;
+    this._webSearch = null;
 
     if (this._background) {
       if (this._background.get_parent()) {
@@ -380,11 +386,38 @@ export default class SearchLightExt extends Extension {
     if (!_search) return;
 
     // add providers here
+    // hide() moves the search UI back to the overview; doing that while the shell
+    // is still inside the result's activate() crashes Clutter, so defer it.
+    this._webSearch ??= new WebSearchProvider(this.path, () =>
+      this._hiTimer?.runOnce(() => this.hide(), 0),
+    );
+    this._providers.push(this._webSearch);
 
     if (_search.addProvider) {
       this._providers.forEach((p) => {
         _search.addProvider(p);
       });
+      // Keyword results (web search) go first, so Enter activates them.
+      this._moveProviderToFront(this._webSearch);
+    }
+  }
+
+  // Uses SearchResultsView internals (_providers, _content); the default result
+  // for Enter is the first visible provider in _providers order.
+  _moveProviderToFront(provider) {
+    const results = Main.overview.searchController?._searchResults;
+    const list = results?._providers;
+    const index = list?.indexOf(provider) ?? -1;
+    if (index < 0) return;
+    list.splice(index, 1);
+    list.unshift(provider);
+    if (provider.display && results._content) {
+      results._content.set_child_at_index(provider.display, 0);
+    }
+    // The header button's animateLaunch() looks the provider app up in
+    // Shell.AppSystem, which does not know our private .desktop file.
+    if (provider.display?.providerInfo) {
+      provider.display.providerInfo.animateLaunch = () => {};
     }
   }
 
@@ -399,6 +432,9 @@ export default class SearchLightExt extends Extension {
     if (_search.removeProvider) {
       this._providers.forEach((p) => {
         _search.removeProvider(p);
+        // removeProvider() destroys the display but leaves the property set;
+        // a later addProvider() would then reuse the destroyed actor.
+        delete p.display;
       });
     }
 
@@ -509,9 +545,17 @@ export default class SearchLightExt extends Extension {
     if (this._isDraggingIcon()) {
       return;
     }
-
-    this._release_ui();
-    this._remove_events();
+    // _release_ui() moves the entry out of the popup, which changes key focus and
+    // makes _onKeyFocusChanged() call hide() again; a nested release while the
+    // first one is still reparenting actors aborts Clutter.
+    if (this._hiding) return;
+    this._hiding = true;
+    try {
+      this._release_ui();
+      this._remove_events();
+    } finally {
+      this._hiding = false;
+    }
 
     if (this._useAnimations) {
       this.mainContainer.ease({
@@ -541,10 +585,14 @@ export default class SearchLightExt extends Extension {
     // cancel all drag
     let result = false;
     try {
-      if (this._searchResults) {
-        let grid =
-          this._searchResults._content.first_child.first_child.child.child;
-        if (grid.style_class == 'grid-search-results') {
+      // Look the app grid up by provider id: the web search provider now sits
+      // in front of it, so _content.first_child is no longer the app grid.
+      const apps = this._searchResults?._providers?.find(
+        (p) => p.id === 'applications',
+      );
+      if (apps?.display) {
+        let grid = apps.display.first_child.child.child;
+        if (grid?.style_class == 'grid-search-results') {
           grid.get_children().forEach((c) => {
             // console.log(`${c._name} ${c._draggable._dragState}`);
             if (
@@ -777,7 +825,6 @@ export default class SearchLightExt extends Extension {
     }
 
     if (this._search) {
-      this._removeProviders();
       this._search.hide();
       if (this._search.get_parent()) {
         this._search.get_parent().remove_child(this._search);

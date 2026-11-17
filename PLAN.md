@@ -112,25 +112,38 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       Enter when apps **also** match (e.g. `g gimp`)?
 
 ### Phase 1: Web search MVP (hardcoded engines)
-- [ ] 1.1 New file `providers/webSearch.js`: provider interface
+- [x] 1.1 New file `providers/webSearch.js`: provider interface
       (`id`, `appInfo`, `isRemoteProvider=false`, `canLaunchSearch`,
       `getInitialResultSet`, `getSubsearchResultSet`, `getResultMetas`,
       `filterResults`, `activateResult`).
-- [ ] 1.2 Parser: first term = keyword, rest = query. Match is case-insensitive.
-- [ ] 1.3 Default engines (hardcoded): `g` Google, `yt` YouTube, `w` Wikipedia,
+- [x] 1.2 Parser: first term = keyword, rest = query. Match is case-insensitive.
+- [x] 1.3 Default engines (hardcoded): `g` Google, `yt` YouTube, `w` Wikipedia,
       `ddg` DuckDuckGo, `gh` GitHub, `so` StackOverflow, `maps` Google Maps,
       `amz` Amazon, `imdb` IMDb, `tr` Google Translate.
-- [ ] 1.4 URL build: `template.replace('{q}', encodeURIComponent(query))`, open
+- [x] 1.4 URL build: `template.replace('{q}', encodeURIComponent(query))`, open
       with `Gio.AppInfo.launch_default_for_uri(url, global.create_app_launch_context(0, -1))`.
-- [ ] 1.5 Provider icon/name: add a `.desktop` file in `apps/` (same pattern as the
+- [x] 1.5 Provider icon/name: add a `.desktop` file in `apps/` (same pattern as the
       Calculator one) or use a custom `appInfo` shim.
-- [ ] 1.6 Register it in `_updateProviders()`, cleanup in `_removeProviders()`
-      (disable/enable leak check).
-- [ ] 1.7 Put the result on top: move the provider display to index 0 in
+- [x] 1.6 Register it in `_updateProviders()`, cleanup in `_removeProviders()`
+      (disable/enable leak check). The provider stays registered for the whole
+      enabled lifetime. Upstream's `_release_ui()` removed providers on every hide
+      and never added them back, and removing them mid-search raced with in-flight
+      results.
+- [x] 1.7 Put the result on top: move the provider display to index 0 in
       `_searchResults._content`, and move it to the front of the `_providers` array so
       **Enter** activates it by default.
-- [ ] 1.8 Manual test: `g naruto`, `yt naruto`, `w naruto`, unknown keyword, empty
-      query, special characters (`&`, `#`, Hindi text).
+- [~] 1.8 Automated: `gjs -m tests/test_websearch_core.js` (13 unit checks: case,
+      `&`/`#`/Hindi encoding) + `./scripts/headless.sh --unsafe -- tests/e2e_websearch.sh`
+      (17 checks with real Enter key presses: g/yt/w, `g settings` beats the app
+      result, `yt` alone shows a hint and opens nothing, no keyword = hidden,
+      disable/enable). **Pending**: a manual check on the real desktop with a real
+      browser (`make build install`, then logout/login).
+- [x] 1.9 Fixes found on the way: after Enter, the popup only went transparent
+      (it closes on window focus change), so it is now hidden explicitly, deferred
+      via `_hiTimer` because hiding inside `activate()` aborted Clutter. `hide()`
+      got a re-entrancy guard (`_release_ui()` → focus change → nested `hide()`).
+      `_isDraggingIcon()` now finds the app grid by provider id, instead of
+      assuming it is `_content.first_child`.
 
 ### Phase 2: Settings UI ("Web Search" page)
 - [ ] 2.1 Schema keys: `web-search-enabled` (b), `web-search-engines` (s, JSON
@@ -178,7 +191,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ### Phase 6: Quality & release
 - [ ] 6.1 Run `make lint`, fix warnings.
-- [ ] 6.2 Enable/disable 20× → no leaked signals/timers (check `journalctl`).
+- [ ] 6.2 Enable/disable 20× → no leaked signals/timers (check `journalctl`). Also
+      `GLib-CRITICAL Source ID … not found` on disable.
+- [ ] 6.2b Shell segfaults on teardown (logout) while the popup is open. This is
+      pre-existing: v37 does the same. The search UI is still reparented into the
+      popup when the shell destroys it.
 - [ ] 6.3 Test on GNOME 46 (local) + 48/50 (VM or nested).
 - [ ] 6.4 README: new features section + screenshots; CHANGELOG entry.
 - [ ] 6.5 Bump version, `make publish` zip, optional upstream PR to icedman.
@@ -189,4 +206,5 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | Date | Phase/Step | Note |
 |------|------------|------|
 | 2026-11-17 | — | Plan created |
-| 2026-11-17 | Phase 0 ✅ | GNOME 46 compat (2 API fallbacks), headless test setup, provider probe passed. Known leftover: `GLib-CRITICAL Source ID … not found` on disable (same class of bug as upstream, harmless; fix in 6.2). Hand-calling `hide()` via Eval aborts the shell on v37 too, so tests close the popup with a virtual Escape key. |
+| 2026-11-17 | Phase 0 ✅ (commit 2caa9fc) | GNOME 46 compat (2 API fallbacks), headless test setup, provider probe passed. Known leftover: `GLib-CRITICAL Source ID … not found` on disable (same class of bug as upstream, harmless; fix in 6.2). Hand-calling `hide()` via Eval aborts the shell on v37 too, so tests close the popup with a virtual Escape key. |
+| 2026-11-17 | Phase 1 ✅ (except the 1.8 manual browser check) | `g`/`yt`/`w`/… keyword search works headless on GNOME 46; 10 default engines hardcoded in `providers/webSearchCore.js`. |
