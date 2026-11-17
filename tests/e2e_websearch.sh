@@ -26,7 +26,17 @@ open_and_type() {
   ev 'if (!Main.overview.searchLight._visible) Main.overview.searchLight._toggle_search_light(); 1' >/dev/null
   sleep 0.5
   ev "Main.overview.searchLight._entry.set_text($(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')); 1" >/dev/null
-  sleep 1.5
+  settle
+}
+# Wait until the shell says the search is done (slow remote providers, a loaded
+# machine), then a moment for the displays to update.
+settle() {
+  sleep 0.3
+  for _ in $(seq 50); do
+    [ "$(ev 'const sr = Main.overview.searchController._searchResults; String(!sr.searchInProgress && !sr._searchTimeoutId)')" = true ] && break
+    sleep 0.1
+  done
+  sleep 0.5
 }
 # front: web provider first? shown: web result visible? default: who gets Enter
 # (web | fallback | other | none)? fb: fallback visible and last?
@@ -44,6 +54,7 @@ cp /usr/share/icons/hicolor/48x48/apps/*.png "$SEED_DIR/www.youtube.com.png" 2>/
 
 mark keyword; open_and_type 'g naruto'; stub
 check 'g naruto: web first + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
+check 'description: plain host, no term highlighting' "$(ev '(() => { let r = null; const walk = (a) => { if (a.style_class?.includes("list-search-result-description")) r = [a.text, a.clutter_text.use_markup]; a.get_children().forEach(walk); }; walk(Main.overview.searchLight._webSearch.display); return JSON.stringify(r); })()')" '["google.com",false]'
 key Return; sleep 1
 check 'g naruto: opened' "$(opened)" '["https://www.google.com/search?q=naruto"]'
 check 'g naruto: popup closed' "$(ev 'String(Main.overview.searchLight._visible)')" 'false'
@@ -67,11 +78,11 @@ $GS reset $SCHEMA web-search-exclusive
 
 mark space; open_and_type 'yt'; stub
 check '"yt" without space: no keyword result' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
-key space; sleep 1.5
+key space; settle
 check '"yt " (real Space key): hint shown + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
 key Return; sleep 1
 check 'hint + Enter: nothing opened' "$(opened)" '[]'
-key BackSpace; sleep 1.5
+key BackSpace; settle
 check 'Backspace: hint gone again' "$(ev "$STATE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["shown"])')" 'False'
 key Escape; sleep 0.5
 

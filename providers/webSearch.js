@@ -13,10 +13,13 @@
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 
+import { ListSearchResult } from 'resource:///org/gnome/shell/ui/search.js';
+
 import {
   buildUrl,
   defaultEngines,
   detectUrl,
+  displayHost,
   matchQuery,
   pickFallbackEngine,
 } from './webSearchCore.js';
@@ -97,6 +100,22 @@ class BaseWebProvider {
     });
   }
 
+  // The shell's list result bolds every search term found in the description,
+  // and a short keyword like "g" lights up random letters of the host. Build
+  // the same row, but keep the description as plain text.
+  createResultObject(meta) {
+    const view = this.display?._resultsView;
+    if (!view) return null; // the shell then builds its default row
+    const result = new ListSearchResult(this, meta, view);
+    const label = result._descriptionLabel?.clutter_text;
+    if (label) {
+      view.disconnectObject(result); // its 'terms-changed' highlighter
+      label.use_markup = false;
+      label.text = meta.description ?? '';
+    }
+    return result;
+  }
+
   filterResults(results, maxResults) {
     return results.slice(0, maxResults);
   }
@@ -142,7 +161,7 @@ export class WebSearchProvider extends BaseWebProvider {
       const url = buildUrl(engine.url, query);
       return [[`web:${engine.keyword}:${query}`, {
         name: `Search ${engine.name} for “${query}”`,
-        description: url,
+        description: displayHost(url),
         url,
         iconUrl: engine.url,
       }]];
@@ -171,7 +190,7 @@ export class WebFallbackProvider extends BaseWebProvider {
     const url = buildUrl(engine.url, query);
     return [[`fallback:${engine.keyword}:${query}`, {
       name: `Search ${engine.name} for “${query}”`,
-      description: url,
+      description: displayHost(url),
       url,
       iconUrl: engine.url,
     }]];

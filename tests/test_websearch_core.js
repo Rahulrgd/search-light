@@ -5,6 +5,7 @@ import {
   detectUrl,
   pickFallbackEngine,
   faviconHost,
+  displayHost,
   buildUrl,
   validateEngine,
   resolveEngines,
@@ -60,6 +61,9 @@ eq('fallback: none enabled', pickFallbackEngine([{ keyword: 'a', name: 'A', url:
 eq('favicon host', faviconHost('https://www.YouTube.com/results?search_query={q}'), 'www.youtube.com');
 eq('favicon host with port', faviconHost('http://localhost:3000/?q={q}'), 'localhost');
 eq('no host for non-http', faviconHost('spotify:search:{q}'), null);
+eq('display host drops www.', displayHost('https://www.google.com/search?q=x'), 'google.com');
+eq('display host keeps subdomains', displayHost('https://en.wikipedia.org/wiki/x'), 'en.wikipedia.org');
+eq('display host for non-http', displayHost('spotify:search:x'), '');
 
 eq('url encode', buildUrl('https://e.com/?q={q}', 'a&b #c'), 'https://e.com/?q=a%26b%20%23c');
 eq('url hindi', buildUrl('https://e.com/?q={q}', 'नमस्ते'), 'https://e.com/?q=%E0%A4%A8%E0%A4%AE%E0%A4%B8%E0%A5%8D%E0%A4%A4%E0%A5%87');

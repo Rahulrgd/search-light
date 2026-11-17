@@ -209,6 +209,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] 3.9 Tests: core +27 unit checks, e2e now 36 checks (real Space/Backspace/
       Enter, exclusive on/off, fallback order + engine, URLs, seeded favicon,
       stale-label regression), prefs +12 UI checks. `tests/run_all.sh` is green.
+- [x] 3.10 Cleaner result row (feedback from the real desktop): the description
+      shows only the host (`google.com`), as plain text. The shell bolds every
+      search term found in a description, so the keyword `g` lit up the letters
+      of "google". `createResultObject()` builds the shell's own
+      `ListSearchResult` and drops its highlighter.
+- [x] 3.11 Test hardening: e2e waits until `searchInProgress` is false instead
+      of a fixed sleep (one rare flaky failure), and the prefs test uses its own
+      cache dir (the running extension downloaded real favicons into the
+      shared one).
 - Note: in the headless shell, `_defaultResult` stays null for app-grid results.
   v37 does the same, so the test checks instead that Enter on an app match
   does not trigger the fallback.

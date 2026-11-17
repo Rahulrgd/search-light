@@ -70,6 +70,12 @@ export function pickFallbackEngine(engines, keyword) {
   return enabled.find((e) => e.keyword.toLowerCase() === wanted) ?? enabled[0] ?? null;
 }
 
+/** Short host for display: "https://www.google.com/…" → "google.com". */
+export function displayHost(url) {
+  const host = faviconHost(url);
+  return host ? host.replace(/^www\./, '') : '';
+}
+
 /** Host of an engine URL template ("www.google.com"), for its favicon. */
 export function faviconHost(urlTemplate) {
   const m = /^https?:\/\/([^/?#:]+)/i.exec(urlTemplate ?? '');
