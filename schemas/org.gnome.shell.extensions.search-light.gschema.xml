@@ -132,6 +132,16 @@
 	<summary>Use window animations</summary>
 	<description>Toggle animations when the search window appears or disappears.</description>
     </key>
+    <key type="b" name="web-search-enabled">
+        <default>true</default>
+        <summary>Web search keywords</summary>
+        <description>Search the web with action keywords, e.g. "g naruto".</description>
+    </key>
+    <key type="s" name="web-search-engines">
+        <default>""</default>
+        <summary>Web search engines</summary>
+        <description>JSON array of {keyword, name, url, enabled}; url contains {q}. Empty means the built-in defaults.</description>
+    </key>
     <key type="d" name="animation-speed">
 	<default>100</default>
 	<summary>Animation speed</summary>

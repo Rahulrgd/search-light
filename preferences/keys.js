@@ -115,6 +115,15 @@ export const SettingsKeys = () => {
       default_value: true,
       widget_type: 'switch',
     },
+    'web-search-enabled': {
+      default_value: true,
+      widget_type: 'switch',
+    },
+    // Edited by preferences/webSearchPage.js, not by a builder widget.
+    'web-search-engines': {
+      default_value: '',
+      widget_type: 'string',
+    },
     'animation-speed': {
       default_value: 100,
       widget_type: 'scale',

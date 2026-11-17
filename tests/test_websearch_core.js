@@ -3,6 +3,9 @@ import {
   DEFAULT_ENGINES,
   matchEngine,
   buildUrl,
+  validateEngine,
+  resolveEngines,
+  defaultEngines,
 } from '../providers/webSearchCore.js';
 import System from 'system';
 
@@ -36,6 +39,32 @@ eq('all defaults have {q} and unique keywords',
   DEFAULT_ENGINES.every((e) => e.url.includes('{q}')) &&
     new Set(DEFAULT_ENGINES.map((e) => e.keyword)).size === DEFAULT_ENGINES.length,
   true);
+
+// validateEngine
+const ok = { keyword: 'ex', name: 'Example', url: 'https://ex.com/?q={q}' };
+eq('valid engine', validateEngine(ok, DEFAULT_ENGINES), null);
+eq('missing keyword', validateEngine({ ...ok, keyword: '  ' }), 'Keyword is required');
+eq('keyword with space', validateEngine({ ...ok, keyword: 'e x' }), 'Keyword cannot contain spaces');
+eq('duplicate keyword (case-insensitive)', validateEngine({ ...ok, keyword: 'YT' }, DEFAULT_ENGINES), 'Keyword “YT” is already used');
+eq('missing name', validateEngine({ ...ok, name: '' }), 'Name is required');
+eq('url without scheme', validateEngine({ ...ok, url: 'ex.com/?q={q}' }), 'URL must start with https:// (or another scheme)');
+eq('url without {q}', validateEngine({ ...ok, url: 'https://ex.com/' }), 'URL must contain {q} where the query goes');
+eq('non-http scheme allowed', validateEngine({ ...ok, url: 'spotify:search:{q}' }), null);
+
+// resolveEngines
+eq('empty setting = defaults', resolveEngines('').length, DEFAULT_ENGINES.length);
+eq('broken json = defaults', resolveEngines('{nope').length, DEFAULT_ENGINES.length);
+eq('non-array json = defaults', resolveEngines('{}').length, DEFAULT_ENGINES.length);
+eq('explicit empty list stays empty', resolveEngines('[]'), []);
+eq('custom list, trimmed, enabled kept',
+  resolveEngines(JSON.stringify([{ keyword: ' ex ', name: 'Ex', url: 'https://ex.com/{q}', enabled: false }])),
+  [{ keyword: 'ex', name: 'Ex', url: 'https://ex.com/{q}', enabled: false }]);
+eq('invalid + duplicate entries dropped',
+  resolveEngines(JSON.stringify([ok, { ...ok, name: 'Dup' }, { keyword: 'bad' }, null, 5])).map((e) => e.name),
+  ['Example']);
+const d = defaultEngines();
+d[0].keyword = 'changed';
+eq('defaultEngines returns a copy', DEFAULT_ENGINES[0].keyword, 'g');
 
 print(failed ? `\n${failed} failed` : '\nall passed');
 System.exit(failed ? 1 : 0);

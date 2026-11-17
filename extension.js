@@ -39,6 +39,7 @@ import { BlurEffect } from './effects/blur_effect.js';
 import { schemaId, SettingsKeys } from './preferences/keys.js';
 import { KeyboardShortcuts } from './keybinding.js';
 import { WebSearchProvider } from './providers/webSearch.js';
+import { resolveEngines } from './providers/webSearchCore.js';
 
 import {
   Extension,
@@ -46,7 +47,12 @@ import {
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // GNOME 48+ moved (un)redirect from Meta.*_for_display to global.compositor.
+// Calls must be balanced: enable() calls hide() before any show(), and an
+// unmatched enable makes mutter warn ("while unredirection is enabled").
+let unredirectDisabled = false;
 function setUnredirect(enabled) {
+  if (enabled !== unredirectDisabled) return;
+  unredirectDisabled = !enabled;
   const c = global.compositor;
   if (c?.enable_unredirect) {
     if (enabled) c.enable_unredirect();
@@ -106,6 +112,10 @@ export default class SearchLightExt extends Extension {
           break;
         case 'animation-speed':
           this._animationSpeed = value;
+          break;
+        case 'web-search-enabled':
+        case 'web-search-engines':
+          this._applyWebSearchSettings();
           break;
         case 'border-radius':
           break;
@@ -391,6 +401,7 @@ export default class SearchLightExt extends Extension {
     this._webSearch ??= new WebSearchProvider(this.path, () =>
       this._hiTimer?.runOnce(() => this.hide(), 0),
     );
+    this._applyWebSearchSettings();
     this._providers.push(this._webSearch);
 
     if (_search.addProvider) {
@@ -400,6 +411,15 @@ export default class SearchLightExt extends Extension {
       // Keyword results (web search) go first, so Enter activates them.
       this._moveProviderToFront(this._webSearch);
     }
+  }
+
+  // Live: called on every web-search-* settings change, no restart needed.
+  _applyWebSearchSettings() {
+    if (!this._webSearch || !this._settings) return;
+    this._webSearch.enabled = this._settings.get_boolean('web-search-enabled');
+    this._webSearch.engines = resolveEngines(
+      this._settings.get_string('web-search-engines'),
+    );
   }
 
   // Uses SearchResultsView internals (_providers, _content); the default result

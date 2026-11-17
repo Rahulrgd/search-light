@@ -10,6 +10,7 @@ const GETTEXT_DOMAIN = 'search-light';
 
 import { schemaId, SettingsKeys } from './preferences/keys.js';
 import { MonitorsConfig } from './monitors.js';
+import { buildWebSearchPage } from './preferences/webSearchPage.js';
 
 import {
   ExtensionPreferences,
@@ -128,6 +129,8 @@ export default class Preferences extends ExtensionPreferences {
     // builder.get_object("providers-group").visible = false;
 
     let settings = this.getSettings(schemaId);
+    window.add(buildWebSearchPage(settings, window).page);
+
     let settingsKeys = SettingsKeys();
     settingsKeys.connectBuilder(builder);
     settingsKeys.connectSettings(settings);

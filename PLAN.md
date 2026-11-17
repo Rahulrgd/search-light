@@ -146,18 +146,34 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       assuming it is `_content.first_child`.
 
 ### Phase 2: Settings UI ("Web Search" page)
-- [ ] 2.1 Schema keys: `web-search-enabled` (b), `web-search-engines` (s, JSON
-      array: `{keyword,name,url,icon,enabled}`), `web-search-default-engine` (s),
-      `web-search-exclusive` (b), `web-search-fallback` (b).
-- [ ] 2.2 Add the new keys to `preferences/keys.js` + `glib-compile-schemas`.
-- [ ] 2.3 New `ui/websearch.ui` Adw page: master switch, engines list
-      (`AdwActionRow` + enable switch + edit/delete buttons), "Add engine" button.
-- [ ] 2.4 Add/Edit dialog: keyword, name, URL (validation: `{q}` must be present,
-      keyword must be unique and contain no spaces), icon chooser (optional).
-- [ ] 2.5 "Reset to defaults" + "Test" button (opens a sample query).
-- [ ] 2.6 Extension listens for settings changes → provider reloads engines live (no
-      restart needed).
-- [ ] 2.7 Add a case in `tests/test_prefs.js`.
+- [x] 2.1 Schema keys `web-search-enabled` (b, default true) and
+      `web-search-engines` (s: a JSON array of `{keyword,name,url,enabled}`). `''`
+      (the default) means "built-in defaults", so new defaults still reach users
+      who never edited the list. The keys for 3.2/3.3 (`exclusive`, `fallback`,
+      `default-engine`) move to Phase 3 with their features.
+- [x] 2.2 Keys added to `preferences/keys.js`; schema compiled.
+- [x] 2.3 `preferences/webSearchPage.js` builds the page in code (no `.ui`):
+      master switch, engine list (keyword · name · URL, plus test / edit / delete
+      / enable switch), "+" button. The list is greyed out when the master switch
+      is off.
+- [x] 2.4 Add/Edit dialog (`Adw.AlertDialog` + `EntryRow`s), validated live by
+      `validateEngine()`: keyword required, no spaces, unique (case-insensitive),
+      name required, URL needs a scheme and `{q}`. The Save button is disabled
+      while the input is invalid.
+- [x] 2.5 "Reset" (with a confirm dialog) and a per-row test button (opens a
+      search for "GNOME").
+- [x] 2.6 Live reload: the extension's settings callback →
+      `_applyWebSearchSettings()`. No restart needed.
+- [x] 2.7 Tests: `tests/test_websearch_prefs.sh` (20 UI checks, real GTK window,
+      memory GSettings), `tests/test_prefs_window.sh` (the real `prefs.js` with
+      all 3 pages; no errors on stderr), 4 live-settings cases in
+      `tests/e2e_websearch.sh`, and 16 more core unit checks.
+      **All tests: `tests/run_all.sh`**.
+- [x] 2.8 Fixes on the way: the row subtitle was parsed as markup (`&` in the
+      Translate URL); unbalanced unredirect calls made mutter warn on GNOME 46.
+- Note: `gnome-extensions prefs` opens no window in the headless shell (same
+  with v37), so `test_prefs_window.sh` loads `prefs.js` with a stubbed
+  `ExtensionPreferences` instead.
 
 ### Phase 3: UX polish
 - [ ] 3.1 Keyword hint: just `yt` or `yt ` → placeholder result "YouTube: type to search".
@@ -208,3 +224,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | — | Plan created |
 | 2026-11-17 | Phase 0 ✅ (commit 2caa9fc) | GNOME 46 compat (2 API fallbacks), headless test setup, provider probe passed. Known leftover: `GLib-CRITICAL Source ID … not found` on disable (same class of bug as upstream, harmless; fix in 6.2). Hand-calling `hide()` via Eval aborts the shell on v37 too, so tests close the popup with a virtual Escape key. |
 | 2026-11-17 | Phase 1 ✅ (except the 1.8 manual browser check) | `g`/`yt`/`w`/… keyword search works headless on GNOME 46; 10 default engines hardcoded in `providers/webSearchCore.js`. |
+| 2026-11-17 | Phase 1 committed (367c3d1) · Phase 2 ✅ | Web Search settings page, live reload, `tests/run_all.sh` (4 suites green). |

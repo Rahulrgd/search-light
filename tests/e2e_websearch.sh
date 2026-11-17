@@ -65,6 +65,25 @@ open_and_type 'w naruto'; stub
 key Return; sleep 1
 check 're-enabled: w naruto' "$(ev 'JSON.stringify(__opened)')" '["https://en.wikipedia.org/wiki/Special:Search?search=naruto"]'
 
+mark case7  # live settings changes, no restart
+GS="gsettings --schemadir $(dirname "$0")/../schemas"
+SCHEMA=org.gnome.shell.extensions.search-light
+$GS set $SCHEMA web-search-engines '[{"keyword":"ex","name":"Example","url":"https://ex.com/?q={q}"}]'; sleep 0.5
+open_and_type 'ex foo bar'; stub
+key Return; sleep 1
+check 'custom engine from settings' "$(ev 'JSON.stringify(__opened)')" '["https://ex.com/?q=foo%20bar"]'
+open_and_type 'g naruto'
+check 'removed engine no longer matches' "$(ev "$STATE")" '{"front":true,"shown":false,"defaultIsWeb":false}'
+key Escape; sleep 0.5
+$GS set $SCHEMA web-search-enabled false; sleep 0.5
+open_and_type 'ex foo'
+check 'master switch off: no web result' "$(ev "$STATE")" '{"front":true,"shown":false,"defaultIsWeb":false}'
+key Escape; sleep 0.5
+$GS reset $SCHEMA web-search-enabled; $GS reset $SCHEMA web-search-engines; sleep 0.5
+open_and_type 'yt naruto'
+check 'reset: defaults back' "$(ev "$STATE")" '{"front":true,"shown":true,"defaultIsWeb":true}'
+key Escape; sleep 0.5
+
 mark done
 cp "$FF_TEST_DIR/shell.log" "${SL_KEEP_LOG:-/dev/null}" 2>/dev/null || true
 check 'extension state' "$(gnome-extensions info $UUID | sed -n 's/.*State: //p')" 'ACTIVE'

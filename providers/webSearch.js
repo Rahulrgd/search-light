@@ -5,7 +5,7 @@
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 
-import { DEFAULT_ENGINES, matchEngine, buildUrl } from './webSearchCore.js';
+import { defaultEngines, matchEngine, buildUrl } from './webSearchCore.js';
 
 const RESULT_ID = 'web-search';
 const ICON_NAME = 'web-browser-symbolic';
@@ -25,7 +25,9 @@ export class WebSearchProvider {
     this.appInfo = Gio.DesktopAppInfo.new_from_filename(
       `${extensionPath}/apps/search-light-web.desktop`,
     );
-    this.engines = DEFAULT_ENGINES;
+    // Both are replaced from GSettings by the extension (web-search-*).
+    this.enabled = true;
+    this.engines = defaultEngines();
     this._match = null;
     // Replaceable in tests so nothing actually opens a browser.
     this.openUri = (uri) =>
@@ -36,7 +38,7 @@ export class WebSearchProvider {
   }
 
   _results(terms) {
-    this._match = matchEngine(terms, this.engines);
+    this._match = this.enabled ? matchEngine(terms, this.engines) : null;
     return this._match ? [RESULT_ID] : [];
   }
 
@@ -68,6 +70,7 @@ export class WebSearchProvider {
   }
 
   activateResult(_id, terms) {
+    if (!this.enabled) return;
     const match = matchEngine(terms, this.engines);
     if (!match || !match.query) return;
     this.openUri(buildUrl(match.engine.url, match.query));
