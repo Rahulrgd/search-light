@@ -40,8 +40,10 @@ import { schemaId, SettingsKeys } from './preferences/keys.js';
 import { KeyboardShortcuts } from './keybinding.js';
 import {
   WebSearchProvider,
+  WebSuggestProvider,
   WebFallbackProvider,
 } from './providers/webSearch.js';
+import { closeHttp } from './providers/http.js';
 import { resolveEngines } from './providers/webSearchCore.js';
 import { FaviconCache } from './providers/favicons.js';
 
@@ -124,6 +126,7 @@ export default class SearchLightExt extends Extension {
         case 'web-search-fallback-engine':
         case 'web-search-open-urls':
         case 'web-search-favicons':
+        case 'web-search-suggestions':
           this._applyWebSearchSettings();
           break;
         case 'border-radius':
@@ -300,7 +303,10 @@ export default class SearchLightExt extends Extension {
     this._unpatchSearchResults();
     this._providers = null;
     this._webSearch = null;
+    this._webSuggest?.destroy();
+    this._webSuggest = null;
     this._webFallback = null;
+    closeHttp();
     this._favicons?.destroy();
     this._favicons = null;
 
@@ -420,22 +426,25 @@ export default class SearchLightExt extends Extension {
       iconFor: (url) => (this._webFaviconsOn ? this._favicons?.gicon(url) : null),
     };
     this._webSearch ??= new WebSearchProvider(webOpts);
+    this._webSuggest ??= new WebSuggestProvider(webOpts);
     this._webFallback ??= new WebFallbackProvider(webOpts);
     // The fallback stays quiet when a keyword or URL result covers the text.
     this._webFallback.isClaimed = () =>
       this._webSearch.enabled &&
       this._webSearch._compute(webOpts.getText()).length > 0;
     this._applyWebSearchSettings();
-    this._providers.push(this._webSearch, this._webFallback);
+    this._providers.push(this._webSearch, this._webSuggest, this._webFallback);
 
     if (_search.addProvider) {
       this._providers.forEach((p) => {
         _search.addProvider(p);
         this._neutralizeProviderHeader(p);
       });
-      // Keyword/URL results go first, so Enter activates them; the fallback
-      // goes last, so it never takes Enter away from an app.
+      // Keyword/URL results go first, so Enter activates them, with the
+      // suggestions right under them; the fallback goes last, so it never
+      // takes Enter away from an app.
       this._moveProvider(this._webSearch, 0);
+      this._moveProvider(this._webSuggest, 1);
       this._moveProvider(this._webFallback, -1);
       this._patchSearchResults();
     }
@@ -453,6 +462,10 @@ export default class SearchLightExt extends Extension {
     this._webSearch.enabled = enabled;
     this._webSearch.engines = engines;
     this._webSearch.openUrls = s.get_boolean('web-search-open-urls');
+    if (this._webSuggest) {
+      this._webSuggest.enabled = enabled && s.get_boolean('web-search-suggestions');
+      this._webSuggest.engines = engines;
+    }
     if (this._webFallback) {
       this._webFallback.enabled = enabled && s.get_boolean('web-search-fallback');
       this._webFallback.engines = engines;
@@ -506,6 +519,7 @@ export default class SearchLightExt extends Extension {
       if (
         web &&
         provider !== web &&
+        provider !== this._webSuggest &&
         this._webExclusive &&
         web.currentMatch()
       ) {
@@ -521,6 +535,23 @@ export default class SearchLightExt extends Extension {
     if (!sr?.__slUpdateResults) return;
     sr._updateResults = sr.__slUpdateResults;
     delete sr.__slUpdateResults;
+  }
+
+  // Tab completes the first suggestion ("g naru" → "g naruto"). Runs in the
+  // capture phase: the search controller's own key-press handler would
+  // otherwise use Tab to move focus into the results first.
+  _onEntryCapturedEvent(_actor, event) {
+    if (
+      event.type() !== Clutter.EventType.KEY_PRESS ||
+      event.get_key_symbol() !== Clutter.KEY_Tab
+    )
+      return Clutter.EVENT_PROPAGATE;
+    const completion = this._webSuggest?.completion();
+    if (!completion) return Clutter.EVENT_PROPAGATE;
+    const entry = Main.overview.searchEntry;
+    entry.set_text(completion);
+    entry.clutter_text.set_cursor_position(-1);
+    return Clutter.EVENT_STOP;
   }
 
   // The shell skips a search whose terms did not change, and "g" → "g " (or
@@ -917,6 +948,10 @@ export default class SearchLightExt extends Extension {
     }
     this._search._text.get_parent().grab_key_focus();
     this._lastTrailingSpace = false;
+    this._capturedEventId = this._search._text.connect(
+      'captured-event',
+      this._onEntryCapturedEvent.bind(this),
+    );
     this._textChangedEventId = this._search._text.connect(
       'text-changed',
       () => {
@@ -953,6 +988,10 @@ export default class SearchLightExt extends Extension {
       if (this._textChangedEventId) {
         this._search._text.disconnect(this._textChangedEventId);
         this._textChangedEventId = null;
+      }
+      if (this._capturedEventId) {
+        this._search._text.disconnect(this._capturedEventId);
+        this._capturedEventId = null;
       }
       if (this._search.__searchCancelled) {
         this._search._searchCancelled = this._search.__searchCancelled;

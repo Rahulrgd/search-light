@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Suggestions
+Comment=Live search suggestions for web search keywords
+Icon=edit-find
+Exec=xdg-open https://duckduckgo.com
+Terminal=false

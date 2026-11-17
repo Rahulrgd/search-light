@@ -3,6 +3,8 @@
 //
 // - WebSearchProvider (kept FIRST): "g naruto" → Google, "g " → hint, typed
 //   URLs → "Open …". Being first, its result is the default for Enter.
+// - WebSuggestProvider (kept SECOND, opt-in): live suggestions from the
+//   engine's suggestion endpoint under the keyword result ("g naru" → naruto…).
 // - WebFallbackProvider (kept LAST): "Search Google for …" when nothing else
 //   claims the text, so it never steals Enter from an app result.
 //
@@ -11,6 +13,7 @@
 // keep showing the text of an older query.
 
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
 
 import { ListSearchResult } from 'resource:///org/gnome/shell/ui/search.js';
@@ -21,8 +24,10 @@ import {
   detectUrl,
   displayHost,
   matchQuery,
+  parseSuggestions,
   pickFallbackEngine,
 } from './webSearchCore.js';
+import { fetchJson } from './http.js';
 
 const ICON_NAME = 'web-browser-symbolic';
 
@@ -35,15 +40,17 @@ class BaseWebProvider {
    *   space that the shell's terms drop)
    * @param {Function} opts.onActivated - called after a URL is opened
    * @param {Function} [opts.iconFor] - (urlTemplate) => Gio.Icon | null
+   * @param {string} [opts.desktopFile] - section header app (apps/<file>)
    */
-  constructor({ id, extensionPath, getText, onActivated, iconFor }) {
+  constructor({ id, extensionPath, getText, onActivated, iconFor,
+    desktopFile = 'search-light-web.desktop' }) {
     this.id = id;
     this.isRemoteProvider = false;
     this.canLaunchSearch = false;
     // Section header (name + icon). A real GAppInfo, because the shell's
     // parental-controls filter calls should_show() on it.
     this.appInfo = Gio.DesktopAppInfo.new_from_filename(
-      `${extensionPath}/apps/search-light-web.desktop`,
+      `${extensionPath}/apps/${desktopFile}`,
     );
     this._getText = getText;
     this._onActivated = onActivated ?? (() => {});
@@ -94,7 +101,7 @@ class BaseWebProvider {
           const gicon = item.iconUrl ? this._iconFor(item.iconUrl) : null;
           return gicon
             ? new St.Icon({ gicon, icon_size: size })
-            : new St.Icon({ icon_name: ICON_NAME, icon_size: size });
+            : new St.Icon({ icon_name: item.iconName ?? ICON_NAME, icon_size: size });
         },
       };
     });
@@ -194,5 +201,114 @@ export class WebFallbackProvider extends BaseWebProvider {
       url,
       iconUrl: engine.url,
     }]];
+  }
+}
+
+const SUGGEST_ICON = 'edit-find-symbolic';
+const CACHE_SIZE = 50;
+
+export class WebSuggestProvider extends BaseWebProvider {
+  constructor(opts) {
+    super({
+      id: 'search-light-web-suggest',
+      desktopFile: 'search-light-suggest.desktop', // "Suggestions" header
+      ...opts,
+    });
+    this.enabled = false; // opt-in (web-search-suggestions)
+    this.max = 5;
+    this.debounceMs = 250;
+    // Replaceable in tests: (url, cancellable) => Promise<parsed JSON>
+    this.fetchJson = fetchJson;
+    this._cache = new Map(); // "kw\nquery" → [suggestions]
+    this._generation = 0;
+    this._timeouts = new Set();
+    this._last = null; // {keyword typed, engine, query, list} of the shown rows
+  }
+
+  _sleep(ms) {
+    return new Promise((resolve) => {
+      const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+        this._timeouts.delete(id);
+        resolve();
+        return GLib.SOURCE_REMOVE;
+      });
+      this._timeouts.add(id);
+    });
+  }
+
+  // The shell's cancellable is cancel()ed and then reset() for every new
+  // search, so a finished-but-stale search cannot tell from it. A generation
+  // counter can: only the newest call may fetch or publish results.
+  async _resultsAsync(cancellable) {
+    const generation = ++this._generation;
+    const isStale = () => generation !== this._generation || this._destroyed;
+    if (!this.enabled) return this._publish(null, []);
+
+    const text = this._getText?.() ?? '';
+    const match = matchQuery(text, this.engines);
+    if (!match || !match.query || !match.engine.suggest)
+      return this._publish(null, []);
+    const { engine, query } = match;
+    const key = `${engine.keyword}\n${query.toLowerCase()}`;
+
+    let list = this._cache.get(key);
+    if (!list) {
+      await this._sleep(this.debounceMs); // typing fast: only the last one fetches
+      if (isStale()) return [];
+      try {
+        const data = await this.fetchJson(buildUrl(engine.suggest, query), cancellable);
+        list = parseSuggestions(data, query, this.max);
+      } catch (_e) {
+        return isStale() ? [] : this._publish(null, []); // offline, aborted, bad JSON
+      }
+      this._cache.set(key, list);
+      if (this._cache.size > CACHE_SIZE)
+        this._cache.delete(this._cache.keys().next().value);
+      if (isStale()) return [];
+    }
+    const typedKeyword = text.trim().split(/\s+/)[0];
+    return this._publish({ typedKeyword, engine, query, list }, list);
+  }
+
+  _publish(last, list) {
+    this._last = last;
+    this._items.clear();
+    for (const s of list) {
+      this._items.set(`suggest:${last.engine.keyword}:${s}`, {
+        name: s,
+        description: '', // the keyword result right above names the engine
+        url: buildUrl(last.engine.url, s),
+        iconName: SUGGEST_ICON,
+      });
+    }
+    return [...this._items.keys()];
+  }
+
+  getInitialResultSet(_terms, cancellable) {
+    return this._resultsAsync(cancellable);
+  }
+
+  getSubsearchResultSet(_previousResults, _terms, cancellable) {
+    return this._resultsAsync(cancellable);
+  }
+
+  /**
+   * Tab completion: "<keyword> <first suggestion>" for the rows on screen, or
+   * null (no suggestions for this text, or already completed).
+   */
+  completion() {
+    const last = this._last;
+    if (!this.enabled || !last || last.list.length === 0) return null;
+    const match = matchQuery(this._getText?.() ?? '', this.engines);
+    if (!match || match.engine !== last.engine || match.query !== last.query)
+      return null;
+    return `${last.typedKeyword} ${last.list[0]}`;
+  }
+
+  destroy() {
+    this._destroyed = true;
+    for (const id of this._timeouts) GLib.source_remove(id);
+    this._timeouts.clear();
+    this._cache.clear();
   }
 }

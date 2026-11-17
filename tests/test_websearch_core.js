@@ -6,6 +6,7 @@ import {
   pickFallbackEngine,
   faviconHost,
   displayHost,
+  parseSuggestions,
   buildUrl,
   validateEngine,
   resolveEngines,
@@ -65,6 +66,7 @@ eq('display host drops www.', displayHost('https://www.google.com/search?q=x'), 
 eq('display host keeps subdomains', displayHost('https://en.wikipedia.org/wiki/x'), 'en.wikipedia.org');
 eq('display host for non-http', displayHost('spotify:search:x'), '');
 
+
 eq('url encode', buildUrl('https://e.com/?q={q}', 'a&b #c'), 'https://e.com/?q=a%26b%20%23c');
 eq('url hindi', buildUrl('https://e.com/?q={q}', 'नमस्ते'), 'https://e.com/?q=%E0%A4%A8%E0%A4%AE%E0%A4%B8%E0%A5%8D%E0%A4%A4%E0%A5%87');
 eq('url path placeholder', buildUrl('https://www.google.com/maps/search/{q}', 'delhi'), 'https://www.google.com/maps/search/delhi');
@@ -91,13 +93,29 @@ eq('non-array json = defaults', resolveEngines('{}').length, DEFAULT_ENGINES.len
 eq('explicit empty list stays empty', resolveEngines('[]'), []);
 eq('custom list, trimmed, enabled kept',
   resolveEngines(JSON.stringify([{ keyword: ' ex ', name: 'Ex', url: 'https://ex.com/{q}', enabled: false }])),
-  [{ keyword: 'ex', name: 'Ex', url: 'https://ex.com/{q}', enabled: false }]);
+  [{ keyword: 'ex', name: 'Ex', url: 'https://ex.com/{q}', suggest: '', enabled: false }]);
 eq('invalid + duplicate entries dropped',
   resolveEngines(JSON.stringify([ok, { ...ok, name: 'Dup' }, { keyword: 'bad' }, null, 5])).map((e) => e.name),
   ['Example']);
 const d = defaultEngines();
 d[0].keyword = 'changed';
 eq('defaultEngines returns a copy', DEFAULT_ENGINES[0].keyword, 'g');
+
+// suggestions: validation + legacy lists
+eq('suggest url optional', validateEngine({ ...ok, suggest: '' }), null);
+eq('suggest url needs https', validateEngine({ ...ok, suggest: 'ex.com/{q}' }), 'Suggestions URL must start with https://');
+eq('suggest url needs {q}', validateEngine({ ...ok, suggest: 'https://ex.com/ac' }), 'Suggestions URL must contain {q}');
+eq('legacy saved list gets default suggest by URL',
+  resolveEngines(JSON.stringify([{ keyword: 'g', name: 'Google', url: 'https://www.google.com/search?q={q}' }]))[0].suggest,
+  DEFAULT_ENGINES[0].suggest);
+eq('explicitly cleared suggest stays empty',
+  resolveEngines(JSON.stringify([{ keyword: 'g', name: 'Google', url: 'https://www.google.com/search?q={q}', suggest: '' }]))[0].suggest, '');
+
+// parseSuggestions
+eq('opensearch format', parseSuggestions(['naru', ['naruto', 'Naruto', 'naru', ' naruto  shippuden ', 7, '']], 'naru'), ['naruto', 'naruto shippuden']);
+eq('ddg object format', parseSuggestions([{ phrase: 'naruto' }, { phrase: 'naruto movie' }, {}], 'x'), ['naruto', 'naruto movie']);
+eq('max entries', parseSuggestions(['q', ['a', 'b', 'c', 'd', 'e', 'f', 'g']], 'q', 5).length, 5);
+eq('garbage tolerated', [parseSuggestions(null, 'q'), parseSuggestions({}, 'q'), parseSuggestions('x', 'q')], [[], [], []]);
 
 print(failed ? `\n${failed} failed` : '\nall passed');
 System.exit(failed ? 1 : 0);

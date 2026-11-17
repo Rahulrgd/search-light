@@ -181,6 +181,9 @@ export function buildWebSearchPage(settings, window, options = {}) {
       'Offer “Open …” for text like github.com/user or https://…'],
     ['web-search-favicons', 'Site icons',
       'Download each engine’s icon once (Google favicon service)'],
+    ['web-search-suggestions', 'Search suggestions',
+      'Live suggestions while you type after a keyword; Tab completes the first. ' +
+      'What you type after the keyword is sent to the engine’s suggestion service.'],
   ]) {
     const row = new Adw.SwitchRow({ title, subtitle });
     settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
@@ -314,7 +317,7 @@ export function buildWebSearchPage(settings, window, options = {}) {
     const editing = index !== null;
     const current = editing
       ? model.engines[index]
-      : { keyword: '', name: '', url: 'https://' };
+      : { keyword: '', name: '', url: 'https://', suggest: '' };
 
     const list = new Gtk.ListBox({
       selection_mode: Gtk.SelectionMode.NONE,
@@ -323,7 +326,11 @@ export function buildWebSearchPage(settings, window, options = {}) {
     const keywordRow = new Adw.EntryRow({ title: 'Keyword', text: current.keyword });
     const nameRow = new Adw.EntryRow({ title: 'Name', text: current.name });
     const urlRow = new Adw.EntryRow({ title: 'URL (use {q} for the query)', text: current.url });
-    [keywordRow, nameRow, urlRow].forEach((r) => list.append(r));
+    const suggestRow = new Adw.EntryRow({
+      title: 'Suggestions URL (optional, OpenSearch JSON, use {q})',
+      text: current.suggest ?? '',
+    });
+    [keywordRow, nameRow, urlRow, suggestRow].forEach((r) => list.append(r));
 
     const errorLabel = new Gtk.Label({
       wrap: true,
@@ -349,6 +356,7 @@ export function buildWebSearchPage(settings, window, options = {}) {
       keyword: keywordRow.text,
       name: nameRow.text,
       url: urlRow.text,
+      suggest: suggestRow.text,
     });
     let touched = editing;
     const validate = () => {
@@ -359,7 +367,7 @@ export function buildWebSearchPage(settings, window, options = {}) {
       dialog.set_response_enabled('save', error === null);
       return error;
     };
-    [keywordRow, nameRow, urlRow].forEach((r) =>
+    [keywordRow, nameRow, urlRow, suggestRow].forEach((r) =>
       r.connect('changed', () => {
         touched = true;
         validate();
@@ -373,7 +381,7 @@ export function buildWebSearchPage(settings, window, options = {}) {
       else model.add(values());
     });
     dialog.present(window);
-    return { dialog, keywordRow, nameRow, urlRow, errorLabel };
+    return { dialog, keywordRow, nameRow, urlRow, suggestRow, errorLabel };
   }
 
   function confirmReset() {

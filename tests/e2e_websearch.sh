@@ -16,7 +16,7 @@ key() {
   ev "const C = imports.gi.Clutter; globalThis.__kbd ??= C.get_default_backend().get_default_seat().create_virtual_device(C.InputDeviceType.KEYBOARD_DEVICE); const t = imports.gi.GLib.get_monotonic_time(); __kbd.notify_keyval(t, C.KEY_$1, C.KeyState.PRESSED); __kbd.notify_keyval(t + 1000, C.KEY_$1, C.KeyState.RELEASED); 1" >/dev/null
 }
 stub() {  # record opened URIs instead of launching a browser
-  ev 'globalThis.__opened = []; const sl = Main.overview.searchLight; sl._webSearch.openUri = sl._webFallback.openUri = (u) => __opened.push(u); 1' >/dev/null
+  ev 'globalThis.__opened = []; const sl = Main.overview.searchLight; sl._webSearch.openUri = sl._webSuggest.openUri = sl._webFallback.openUri = (u) => __opened.push(u); 1' >/dev/null
 }
 opened() { ev 'JSON.stringify(__opened)'; }
 check() {  # check <name> <actual> <expected>
@@ -122,11 +122,52 @@ key Escape; sleep 0.5
 $GS reset $SCHEMA web-search-open-urls
 check 'popup closed: providers stay registered' "$(ev "$ORDER")" 'search-light-web-search … search-light-web-fallback'
 
+mark suggest  # network stubbed: records URLs, answers in OpenSearch format
+$GS set $SCHEMA web-search-suggestions true; sleep 0.5
+stub_suggest() {
+  ev 'globalThis.__fetches = []; Main.overview.searchLight._webSuggest._cache.clear(); Main.overview.searchLight._webSuggest.fetchJson = async (url) => { __fetches.push(url); if (globalThis.__fetchFail) throw new Error("offline"); const q = decodeURIComponent(url.split("q=").pop()); return [q, [q + "to", q + "to shippuden", q + "to episodes"]]; }; 1' >/dev/null
+}
+SUGGEST='(() => { const sl = Main.overview.searchLight; const d = sl._webSuggest.display; const l = Main.overview.searchController._searchResults._providers; const names = []; const walk = (a) => { if (a.style_class?.includes("list-search-result-title")) a.get_children().forEach((c) => c instanceof imports.gi.St.Label && names.push(c.text)); a.get_children().forEach(walk); }; if (d?.visible) walk(d); return JSON.stringify({ second: l[1] === sl._webSuggest, rows: names }); })()'
+open_and_type 'x'; stub; stub_suggest
+open_and_type 'g naru'
+check 'suggestions under the keyword result' "$(ev "$SUGGEST")" '{"second":true,"rows":["naruto","naruto shippuden","naruto episodes"]}'
+check 'one request, query encoded' "$(ev 'JSON.stringify(__fetches.map((u) => u.replace(/^.*[?&]q=/, "q=")))')" '["q=naru"]'
+check 'keyword result still first + default' "$(ev "$STATE")" '{"front":true,"shown":true,"default":"web","fb":false}'
+check 'exclusive mode keeps suggestions, hides apps' "$(ev "$APPS_SHOWN")" 'false'
+ev 'globalThis.__fetches = []; 1' >/dev/null
+for t in 'g s' 'g sa' 'g sas' 'g sasu'; do ev "Main.overview.searchLight._entry.set_text('$t'); 1" >/dev/null; done
+settle
+check 'typing fast: debounced to the last text only' "$(ev 'JSON.stringify(__fetches.map((u) => u.replace(/^.*[?&]q=/, "q=")))')" '["q=sasu"]'
+open_and_type 'g naru'
+check 'same query again: served from cache' "$(ev 'String(__fetches.length)')" '1'
+key Tab; settle
+check 'Tab completes the first suggestion' "$(ev 'Main.overview.searchLight._entry.get_text()')" 'g naruto'
+check 'after Tab: suggestions for the new text' "$(ev "$SUGGEST")" '{"second":true,"rows":["narutoto","narutoto shippuden","narutoto episodes"]}'
+open_and_type 'g naru'; stub
+ev 'Main.overview.searchLight._webSuggest.display._content.get_child_at_index(1).activate(); 1' >/dev/null; sleep 1
+check 'activating a suggestion searches it' "$(opened)" '["https://www.google.com/search?q=naruto%20shippuden"]'
+open_and_type 'yt bor'
+check 'per-engine endpoint (YouTube)' "$(ev 'JSON.stringify(__fetches.slice(-1).map((u) => u.includes("ds=yt")))')" '[true]'
+open_and_type 'gh rust'
+check 'engine without suggest URL: no request, no rows' "$(ev 'String(__fetches.some((u) => u.includes("rust")))'),$(ev "$SUGGEST")" 'false,{"second":true,"rows":[]}'
+ev 'globalThis.__fetchFail = true; 1' >/dev/null
+open_and_type 'g offline'
+check 'request fails: no rows, keyword result unaffected' "$(ev "$SUGGEST"),$(ev "$STATE")" '{"second":true,"rows":[]},{"front":true,"shown":true,"default":"web","fb":false}'
+ev 'globalThis.__fetchFail = false; 1' >/dev/null
+key Escape; sleep 0.5
+$GS reset $SCHEMA web-search-suggestions; sleep 0.5
+ev 'globalThis.__fetches = []; 1' >/dev/null
+open_and_type 'g boruto'
+check 'suggestions off (default): no request, no rows' "$(ev 'String(__fetches.length)'),$(ev "$SUGGEST")" '0,{"second":true,"rows":[]}'
+key Tab; sleep 0.5
+check 'suggestions off: Tab does not complete' "$(ev 'Main.overview.searchLight._entry.get_text()')" 'g boruto'
+key Escape; sleep 0.5
+
 mark reenable; gnome-extensions disable $UUID; sleep 1
 check 'disabled: providers removed' "$(ev 'String(Main.overview.searchController._searchResults._providers.filter(p => p.id.startsWith("search-light-web")).length)')" '0'
 check 'disabled: _updateResults restored' "$(ev 'String(!("__slUpdateResults" in Main.overview.searchController._searchResults))')" 'true'
 gnome-extensions enable $UUID; sleep 2
-check 're-enabled: one of each, first and last' "$(ev 'const l = Main.overview.searchController._searchResults._providers; [l.filter(p => p.id.startsWith("search-light-web")).length, l[0].id, l[l.length - 1].id].join(",")')" '2,search-light-web-search,search-light-web-fallback'
+check 're-enabled: one of each, in place' "$(ev 'const l = Main.overview.searchController._searchResults._providers; [l.filter(p => p.id.startsWith("search-light-web")).length, l[0].id, l[1].id, l[l.length - 1].id].join(",")')" '3,search-light-web-search,search-light-web-suggest,search-light-web-fallback'
 open_and_type 'w naruto'; stub
 key Return; sleep 1
 check 're-enabled: w naruto' "$(opened)" '["https://en.wikipedia.org/wiki/Special:Search?search=naruto"]'

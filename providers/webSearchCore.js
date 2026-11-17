@@ -5,10 +5,24 @@
 export const QUERY_PLACEHOLDER = '{q}';
 
 export const DEFAULT_ENGINES = [
-  { keyword: 'g', name: 'Google', url: 'https://www.google.com/search?q={q}' },
-  { keyword: 'yt', name: 'YouTube', url: 'https://www.youtube.com/results?search_query={q}' },
-  { keyword: 'w', name: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Special:Search?search={q}' },
-  { keyword: 'ddg', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q={q}' },
+  // `suggest`: optional suggestion endpoint answering ["query", ["s1", "s2", …]]
+  // (the OpenSearch suggestions format).
+  {
+    keyword: 'g', name: 'Google', url: 'https://www.google.com/search?q={q}',
+    suggest: 'https://suggestqueries.google.com/complete/search?client=firefox&ie=utf-8&oe=utf-8&q={q}',
+  },
+  {
+    keyword: 'yt', name: 'YouTube', url: 'https://www.youtube.com/results?search_query={q}',
+    suggest: 'https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&ie=utf-8&oe=utf-8&q={q}',
+  },
+  {
+    keyword: 'w', name: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Special:Search?search={q}',
+    suggest: 'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&limit=6&search={q}',
+  },
+  {
+    keyword: 'ddg', name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q={q}',
+    suggest: 'https://duckduckgo.com/ac/?type=list&q={q}',
+  },
   { keyword: 'gh', name: 'GitHub', url: 'https://github.com/search?q={q}' },
   { keyword: 'so', name: 'Stack Overflow', url: 'https://stackoverflow.com/search?q={q}' },
   { keyword: 'maps', name: 'Google Maps', url: 'https://www.google.com/maps/search/{q}' },
@@ -107,6 +121,11 @@ export function validateEngine(engine, others = []) {
   if (!url) return 'URL is required';
   if (!SCHEME_RE.test(url)) return 'URL must start with https:// (or another scheme)';
   if (!url.includes(QUERY_PLACEHOLDER)) return `URL must contain ${QUERY_PLACEHOLDER} where the query goes`;
+  const suggest = (engine.suggest ?? '').trim();
+  if (suggest) {
+    if (!/^https?:\/\//i.test(suggest)) return 'Suggestions URL must start with https://';
+    if (!suggest.includes(QUERY_PLACEHOLDER)) return `Suggestions URL must contain ${QUERY_PLACEHOLDER}`;
+  }
   return null;
 }
 
@@ -116,6 +135,7 @@ export function normalizeEngine(engine) {
     keyword: engine.keyword.trim(),
     name: engine.name.trim(),
     url: engine.url.trim(),
+    suggest: (engine.suggest ?? '').trim(),
     enabled: engine.enabled !== false,
   };
 }
@@ -147,9 +167,37 @@ export function resolveEngines(json) {
       keyword: String(e.keyword ?? ''),
       name: String(e.name ?? ''),
       url: String(e.url ?? ''),
+      // Lists saved before suggestions existed have no `suggest` field: give
+      // built-in engines (same URL) their default endpoint.
+      suggest: String(
+        e.suggest ?? DEFAULT_ENGINES.find((d) => d.url === e.url)?.suggest ?? ''),
       enabled: e.enabled,
     };
     if (validateEngine(candidate, out) === null) out.push(normalizeEngine(candidate));
+  }
+  return out;
+}
+
+/**
+ * Suggestions from a parsed suggestion response. Accepts the OpenSearch format
+ * ["query", ["s1", …], …] (Google, YouTube, Wikipedia, DuckDuckGo type=list)
+ * and DuckDuckGo's default [{phrase: "s1"}, …]. Drops the query itself and
+ * duplicates; at most `max` entries.
+ */
+export function parseSuggestions(data, query, max = 5) {
+  let list = [];
+  if (Array.isArray(data) && Array.isArray(data[1])) list = data[1];
+  else if (Array.isArray(data)) list = data.map((d) => d?.phrase);
+  const seen = new Set([(query ?? '').trim().toLowerCase()]);
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string') continue;
+    const s = item.trim().replace(/\s+/g, ' ');
+    const k = s.toLowerCase();
+    if (!s || seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= max) break;
   }
   return out;
 }

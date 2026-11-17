@@ -223,12 +223,29 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
   does not trigger the fallback.
 
 ### Phase 4: Search suggestions (opt-in)
-- [ ] 4.1 Async HTTP with `Soup 3`, 250 ms debounce, `Gio.Cancellable` to cancel old
-      requests.
-- [ ] 4.2 Per-engine suggest URL (Google: `suggestqueries.google.com/complete/search?client=firefox&q=`,
-      DDG: `duckduckgo.com/ac/?q=`).
-- [ ] 4.3 Show suggestions as extra rows; Tab = autocomplete into the entry.
-- [ ] 4.4 Privacy note + default OFF.
+- [x] 4.1 `providers/http.js`: Soup 3 `fetchJson()` with a shared session, a
+      generic user agent, and a 5 s timeout. `WebSuggestProvider`: 250 ms
+      debounce. The shell's cancellable aborts in-flight requests. The shell
+      `reset()`s that cancellable after cancelling, so stale searches are
+      detected with a generation counter. An LRU cache keeps 50 recent queries.
+- [x] 4.2 Optional `suggest` URL per engine, in the OpenSearch format
+      `["q", [s…]]`. Built in for Google, YouTube (`ds=yt`), Wikipedia
+      (opensearch) and DuckDuckGo (`type=list`). Lists saved before this
+      feature get the default endpoint by URL. The Add/Edit dialog has an
+      optional "Suggestions URL" field (validated: https + `{q}`).
+- [x] 4.3 Up to 5 rows in their own "Suggestions" section, right under the
+      keyword result (no description; the result above names the engine).
+      Activating a row searches it. **Tab** completes the first suggestion:
+      a `captured-event` handler runs before the search controller's Tab → focus
+      handling. Exclusive mode keeps the suggestions visible.
+- [x] 4.4 `web-search-suggestions` defaults to **off**. The switch subtitle
+      says that the text after the keyword goes to the engine's suggestion
+      service.
+- [x] 4.5 Tests: +8 core checks (parse formats, validation, legacy lists),
+      +13 e2e checks with a stubbed network (placement, debounce, cache, Tab,
+      activation, per-engine endpoint, failure, off = no request), +2 prefs
+      checks. Real endpoints were checked by hand in the headless shell
+      (Google, YouTube, Wikipedia, DDG, Hindi query).
 
 ### Phase 5: More Flow-style providers (one by one, each with its own switch)
 - [ ] 5.1 Refactor: common `providers/base.js` + registry (keyword, enabled, priority).
@@ -263,3 +280,4 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 | 2026-11-17 | Phase 1 committed (367c3d1) · Phase 2 ✅ | Web Search settings page, live reload, `tests/run_all.sh` (4 suites green). |
 | 2026-11-17 | v101 installed on the real desktop | `make build install-zip` + re-login; web search and the settings page confirmed working by hand. Use `install-zip` (a clean install), not `install` (which copies tests/ and scripts/ too). |
 | 2026-11-17 | Branch pushed · Phase 3 ✅ | Space-after-keyword, exclusive mode, fallback (last), typed URLs, favicons, stale-label fix. |
+| 2026-11-17 | Row polish committed (10c495c) · Phase 4 ✅ | Live suggestions (opt-in), Tab completion, "Suggestions" section. |

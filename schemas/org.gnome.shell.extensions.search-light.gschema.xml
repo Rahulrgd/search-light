@@ -167,6 +167,11 @@
         <summary>Site icons</summary>
         <description>Download each engine's icon once (Google favicon service) and cache it.</description>
     </key>
+    <key type="b" name="web-search-suggestions">
+        <default>false</default>
+        <summary>Search suggestions</summary>
+        <description>Show live suggestions from the engine while typing after a keyword. Sends that text to the engine's suggestion service.</description>
+    </key>
     <key type="d" name="animation-speed">
 	<default>100</default>
 	<summary>Animation speed</summary>

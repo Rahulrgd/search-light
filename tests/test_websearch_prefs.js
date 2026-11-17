@@ -49,7 +49,8 @@ function respond(dialog, response) {
   pump(300); // a dialog still animating in ignores force_close()
   dialog.emit('response', response);
   dialog.force_close();
-  pump(300);
+  for (let i = 0; i < 20 && win.visible_dialog === dialog; i++) pump(50);
+  pump(100);
   const left = win.visible_dialog;
   if (left) print(`     (after ${response}: still open: ${left.heading})`);
 }
@@ -94,6 +95,7 @@ settings.set_boolean('web-search-exclusive', true);
 eq('setting -> exclusive switch', ui.switches['web-search-exclusive'].active, true);
 for (const key of ['web-search-fallback', 'web-search-open-urls', 'web-search-favicons'])
   eq(`${key} switch on by default`, ui.switches[key].active, true);
+eq('suggestions switch off by default (privacy)', ui.switches['web-search-suggestions'].active, false);
 
 // Fallback engine combo
 const choice = () => ui.fallbackRow.model.get_string(ui.fallbackRow.selected);
@@ -138,6 +140,13 @@ eq('added engine saved to settings', keywords().slice(-1), ['ex']);
 eq('row added', rowTitles().slice(-1), ['Example']);
 
 // Edit dialog keeps its own keyword valid, saves the change
+eq('suggest field: invalid URL blocks Save', (() => {
+  const d = ui.openEditor(0);
+  d.suggestRow.text = 'https://ex.com/ac';
+  const r = [d.errorLabel.label, d.dialog.get_response_enabled('save')];
+  respond(d.dialog, 'cancel');
+  return r;
+})(), ['Suggestions URL must contain {q}', false]);
 ed = ui.openEditor(10);
 pump();
 eq('edit dialog prefilled + valid', [ed.keywordRow.text, ed.dialog.get_response_enabled('save')], ['ex', true]);
